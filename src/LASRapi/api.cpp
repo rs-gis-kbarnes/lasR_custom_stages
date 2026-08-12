@@ -28,6 +28,23 @@ Pipeline add_rgb()
   return Pipeline(s);
 }
 
+Pipeline classify_transfer(std::vector<std::string> reference_files, double dist_threshold, double ref_buffer, std::vector<int> source_classes, int target_class)
+{
+  if (reference_files.empty()) throw std::invalid_argument("Invalid argument: 'reference_files' is empty.");
+  if (dist_threshold <= 0)     throw std::invalid_argument("Invalid argument: 'dist_threshold' must be positive.");
+  if (ref_buffer < 0)          throw std::invalid_argument("Invalid argument: 'ref_buffer' must be non-negative.");
+  if (source_classes.empty())  throw std::invalid_argument("Invalid argument: 'source_classes' is empty.");
+
+  Stage s("classify_transfer");
+  s.set("reference_files", reference_files);
+  s.set("dist_threshold", dist_threshold);
+  s.set("ref_buffer", ref_buffer);
+  s.set("source_classes", source_classes);
+  s.set("class", target_class);
+
+  return Pipeline(s);
+}
+
 Pipeline classify_with_sor(int k, int m, int classification)
 {
   if (k < 2)  throw std::invalid_argument("Invalid argument: impossible to compute standard deviation with less than 2-nearest neighbors");

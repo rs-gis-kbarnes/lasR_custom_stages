@@ -190,6 +190,7 @@ PipelineInfo pipeline_info(const std::string& config_file);
 
 Pipeline add_attribute(std::string data_type, std::string name, std::string description, double scale = 1, double offset = 0);
 Pipeline add_rgb();
+Pipeline classify_transfer(std::vector<std::string> reference_files, double dist_threshold, double ref_buffer, std::vector<int> source_classes, int target_class);
 Pipeline classify_with_sor(int k = 8, int m = 6, int classification = 18);
 Pipeline classify_with_ipf(double r = 1.0, int n = 1, int classification = 18);
 Pipeline classify_with_ivf(std::vector<double> res = {5,5,5}, int n = 6, int classification = 18, std::vector<std::string> filter = {""});

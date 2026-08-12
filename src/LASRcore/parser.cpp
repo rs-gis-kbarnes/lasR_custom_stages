@@ -8,6 +8,7 @@
 #include "addrgb.h"
 #include "boundaries.h"
 #include "breakif.h"
+#include "classifytransfer.h"
 #include "csf.h"
 #include "edit.h"
 #include "filter.h"
@@ -93,6 +94,7 @@ bool Engine::parse(const nlohmann::json& json, bool progress)
   {
     {"add_attribute",        create_instance<LASRaddattribute>},
     {"add_rgb",              create_instance<LASRaddrgb>},
+    {"classify_transfer", create_instance<LASRclassifytransfer>},
     {"classify_with_csf",    create_instance<LASRcsf>},
     {"classify_with_ptd",    create_instance<LASRptd>},
     {"classify_with_ipf",    create_instance<LASRipf>},

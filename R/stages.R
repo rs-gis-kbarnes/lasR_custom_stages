@@ -198,6 +198,29 @@ callback = function(fun, expose = "xyz", ..., drop_buffer = FALSE, no_las_update
   return(s)
 }
 
+#' Transfer classification from a reference point cloud
+#'
+#' For each point in the current point cloud, find the nearest neighbor within
+#' a set of reference LAS/LAZ files and, if the distance is below `dist_threshold`
+#' and the reference point's classification is one of `source_classes`, assign
+#' `target_class` to the point.
+#'
+#' @param reference_files character. Path(s) to the reference LAS/LAZ file(s).
+#' @param dist_threshold numeric. Maximum 3D distance to the nearest reference point.
+#' @param ref_buffer numeric. Buffer added around the current chunk's bounding box
+#' when querying the reference files, to avoid edge artifacts.
+#' @param source_classes integer. One or more classification values in the reference
+#' data that trigger the transfer.
+#' @param target_class integer. Classification value assigned to matching points.
+#' @template return-pointcloud
+#' @export
+#' @md
+classify_transfer = function(reference_files, dist_threshold = 3, ref_buffer = 25, source_classes = 6L, target_class = 6L)
+{
+  reference_files <- normalizePath(reference_files, mustWork = TRUE)
+  return(.APISTAGES$classify_transfer(reference_files, dist_threshold, ref_buffer, as.integer(source_classes), as.integer(target_class)))
+}
+
 #' Classify noise points
 #'
 #' Classify points using the Statistical Outliers Removal (SOR) methods first described in the PCL
