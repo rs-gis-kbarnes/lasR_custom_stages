@@ -2,11 +2,11 @@
 #include "LASio.h"
 #include "Header.h"
 #include "PointSchema.h" // Point, AttributeAccessor
-
+  
 #include "nanoflann/nanoflann.h"
-
+  
 #include <cmath>
-
+  
 // Adaptor over plain std::vector<double> buffers for the reference points,
 // mirroring PointCloudAdaptor's shape but for an external point set.
 struct RefCloudAdaptor
@@ -27,16 +27,43 @@ struct RefCloudAdaptor
   }
   template<class BBOX> bool kdtree_get_bbox(BBOX&) const { return false; }
 };
-
+  
 using RefKDTree = nanoflann::KDTreeSingleIndexAdaptor<
   nanoflann::L2_Simple_Adaptor<double, RefCloudAdaptor>, RefCloudAdaptor, 3>;
-
+  
+std::vector<std::string> LASRclassifytransfer::get_overlapping_reference_files(double xmin, double ymin, double xmax, double ymax) const
+{
+  std::vector<std::string> overlapping;
+  overlapping.reserve(reference_files.size());
+  
+  for (size_t i = 0 ; i < reference_files.size() ; ++i)
+  {
+    const auto& bb = reference_bboxes[i];
+    if (xmin <= bb.maxx && xmax >= bb.minx && ymin <= bb.maxy && ymax >= bb.miny)
+      overlapping.push_back(reference_files[i]);
+  }
+  
+  return overlapping;
+}
+  
 bool LASRclassifytransfer::process(PointCloud*& las)
 {
   if (reference_files.empty())
   {
     last_error = "No reference files provided.";
     return false;
+  }
+  
+  // 0. Narrow down to only the reference files whose header bbox actually
+  // overlaps this chunk's extent + ref_buffer, instead of handing LASlib
+  // the entire reference_files list on every chunk.
+  std::vector<std::string> candidates = get_overlapping_reference_files(
+    xmin - ref_buffer, ymin - ref_buffer, xmax + ref_buffer, ymax + ref_buffer);
+  
+  if (candidates.empty())
+  {
+    // No reference data anywhere near this chunk: not an error, just a no-op.
+    return true;
   }
   
   // 1. Read the reference points inside [xmin,ymin,xmax,ymax] + ref_buffer.
@@ -46,7 +73,7 @@ bool LASRclassifytransfer::process(PointCloud*& las)
   
   try
   {
-    ok = refio.query(reference_files, {}, xmin, ymin, xmax, ymax, ref_buffer, circular, filters);
+    ok = refio.query(candidates, {}, xmin, ymin, xmax, ymax, ref_buffer, circular, filters);
   }
   catch (const std::exception& e)
   {
@@ -67,7 +94,7 @@ bool LASRclassifytransfer::process(PointCloud*& las)
   // file's point count (raw LAS header field), not the number of points
   // actually inside the [xmin,ymin,xmax,ymax] + ref_buffer query region
   // applied above. Do NOT reserve() against it here: doing so caused every
-  // chunk to over-allocate 4 vectors sized to the entire reference file,
+  // chunk to over-allocate 4 vectors sized to the entire reference file(s),
   // which multiplies badly with chunk count/concurrency on large files.
   // Let the vectors grow dynamically instead.
   std::vector<double> ref_x, ref_y, ref_z;
@@ -108,31 +135,31 @@ bool LASRclassifytransfer::process(PointCloud*& las)
   while (las->read_point())
   {
     if (progress->interrupted()) break;
-    
+  
     double query_pt[3] = { las->point.get_x(), las->point.get_y(), las->point.get_z() };
-    
+  
     RefKDTree::IndexType nn_idx;
     double nn_dist_sq;
     kdtree.knnSearch(query_pt, 1, &nn_idx, &nn_dist_sq);
-    
+  
     if (std::sqrt(nn_dist_sq) < dist_threshold && source_classes.count(ref_class[nn_idx]) > 0)
     {
       set_classification(&las->point, (double)target_class);
     }
-    
+  
     (*progress)++;
     progress->show();
   }
   
   return true;
 }
-
+  
 bool LASRclassifytransfer::set_parameters(const nlohmann::json& stage)
 {
   reference_files = get_vector<std::string>(stage["reference_files"]);
-  dist_threshold= stage.value("dist_threshold", 3.0);
-  ref_buffer= stage.value("ref_buffer", 25.0);
-  target_class= stage.value("class", 6);
+  dist_threshold = stage.value("dist_threshold", 3.0);
+  ref_buffer = stage.value("ref_buffer", 25.0);
+  target_class = stage.value("class", 6);
   
   std::vector<int> classes = get_vector<int>(stage["source_classes"]);
   source_classes = std::unordered_set<int>(classes.begin(), classes.end());
@@ -155,5 +182,29 @@ bool LASRclassifytransfer::set_parameters(const nlohmann::json& stage)
     return false;
   }
   
+  // Build a lightweight bbox index over the reference files ONCE. This is
+  // header-only I/O (no points read), so it is cheap even for large lists,
+  // and lets process() skip files that can't possibly overlap a given chunk.
+  reference_bboxes.clear();
+  reference_bboxes.reserve(reference_files.size());
+  
+  for (const auto& f : reference_files)
+  {
+    LASio hio;
+    try
+    {
+      hio.open(f);
+      Header h;
+      hio.populate_header(&h);
+      reference_bboxes.push_back({h.min_x, h.min_y, h.max_x, h.max_y});
+      hio.close();
+    }
+    catch (const std::exception& e)
+    {
+      last_error = std::string("Failed to read header of reference file '") + f + "': " + e.what();
+      return false;
+    }
+  }
+  
   return true;
-}
+} 
