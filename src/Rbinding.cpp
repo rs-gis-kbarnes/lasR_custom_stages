@@ -53,6 +53,7 @@ RCPP_MODULE(stages)
   function("add_rgb", &api::add_rgb, "Add rgb attributes to the point cloud");
   function("aggregate", &api::aggregate, "Rasterize with R expression");
   function("callback", &api::callback, "Callback R function on the point cloud");
+  function("classify_transfer", &api::classify_transfer, "Transfer classification from a reference point cloud");
   function("classify_with_sor", &api::classify_with_sor, "Classify noise with SOR");
   function("classify_with_ipf", &api::classify_with_ipf, "Classify noise with IPF");
   function("classify_with_ivf", &api::classify_with_ivf, "Classify noise with IVF");
