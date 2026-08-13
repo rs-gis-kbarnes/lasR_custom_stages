@@ -131,18 +131,19 @@ bool LASRclassifytransfer::process(PointCloud*& las)
   progress->reset();
   progress->set_total(las->npoints);
   progress->set_prefix("classify_transfer");
-  
   while (las->read_point())
   {
     if (progress->interrupted()) break;
   
     double query_pt[3] = { las->point.get_x(), las->point.get_y(), las->point.get_z() };
-  
+    // precompute squared distance threshold to avoid std::sqrt on nn_dist_sq
+    double dist_threshold = this->dist_threshold * this->dist_threshold;
     RefKDTree::IndexType nn_idx;
     double nn_dist_sq;
+
     kdtree.knnSearch(query_pt, 1, &nn_idx, &nn_dist_sq);
   
-    if (std::sqrt(nn_dist_sq) < dist_threshold && source_classes.count(ref_class[nn_idx]) > 0)
+if (nn_dist_sq < dist_threshold && source_classes.count(ref_class[nn_idx]) > 0)
     {
       set_classification(&las->point, (double)target_class);
     }
