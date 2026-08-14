@@ -383,3 +383,59 @@ bool PolygonXY::contains(const PolygonXY& other) const
   }
   return true;
 }
+
+/* ====================
+ * POLYGON 3d
+ * ====================*/
+
+PolygonXYZ::PolygonXYZ(const std::vector<PointXYZ>& coords) { coordinates = coords; }  
+void PolygonXYZ::push_back(const PointXYZ& p) { coordinates.push_back(p); }  
+ 
+bool PolygonXYZ::is_closed() const  
+{  
+  if (coordinates.size() < 2) return false;  
+  return coordinates.front() == coordinates.back();  
+}  
+void PolygonXYZ::close() { if (!is_closed() && !coordinates.empty()) coordinates.push_back(coordinates.front()); }  
+ 
+double PolygonXYZ::signed_area() const  
+{  
+  if (coordinates.size() < 3) return 0.0;  
+  double area = 0.0;  
+  for (size_t i = 0, j = coordinates.size() - 1; i < coordinates.size(); j = i++)  
+    area += (coordinates[j].x * coordinates[i].y - coordinates[i].x * coordinates[j].y);  
+  return 0.5 * area;  
+}  
+bool PolygonXYZ::is_clockwise() const { return signed_area() < 0; }  
+void PolygonXYZ::make_clockwise() { if (!is_clockwise()) std::reverse(coordinates.begin(), coordinates.end()); }  
+void PolygonXYZ::make_counterclockwise() { if (is_clockwise()) std::reverse(coordinates.begin(), coordinates.end()); }  
+ 
+bool PolygonXYZ::contains(const PointXY& p) const  
+{  
+  size_t n = coordinates.size();  
+  if (n < 3) return false;  
+  bool inside = false;  
+  for (size_t i = 0, j = n - 1; i < n; j = i++)  
+  {  
+    const auto& pi = coordinates[i];  
+    const auto& pj = coordinates[j];  
+    if ((std::min(pi.y, pj.y) <= p.y && p.y <= std::max(pi.y, pj.y)) &&  
+        (std::min(pi.x, pj.x) <= p.x && p.x <= std::max(pi.x, pj.x)))  
+    {  
+      double dx = pj.x - pi.x, dy = pj.y - pi.y;  
+      if (std::abs(dy * (p.x - pi.x) - dx * (p.y - pi.y)) < 1e-12) return true;  
+    }  
+    if ((pi.y > p.y) != (pj.y > p.y))  
+    {  
+      double x_intersect = pi.x + (p.y - pi.y) * (pj.x - pi.x) / (pj.y - pi.y);  
+      if (p.x < x_intersect) inside = !inside;  
+    }  
+  }  
+  return inside;  
+}  
+bool PolygonXYZ::contains(const PolygonXYZ& other) const  
+{  
+  if (other.coordinates.empty()) return false;  
+  for (const auto& pt : other.coordinates) if (!contains(pt)) return false;  
+  return true;  
+}

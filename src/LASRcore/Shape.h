@@ -207,6 +207,44 @@ public:
   bool contains(const PolygonXY& other) const;
 };
 
+struct Edge3D  
+{  
+  PointXYZ A;  
+  PointXYZ B;  
+  Edge3D(const PointXYZ& A, const PointXYZ& B) : A(A), B(B) { }  
+  bool operator==(const Edge3D& other) const  
+  {  
+    return (A == other.A && B == other.B) || (A == other.B && B == other.A);  
+  }  
+  std::size_t hash() const  
+  {  
+    size_t seed = 0;  
+    auto hc = [&seed](size_t h){ seed ^= h + 0x9e3779b9 + (seed << 6) + (seed >> 2); };  
+    hc(std::hash<double>{}(A.x < B.x ? A.x : B.x));  
+    hc(std::hash<double>{}(A.y < B.y ? A.y : B.y));  
+    hc(std::hash<double>{}(A.x < B.x ? B.x : A.x));  
+    hc(std::hash<double>{}(A.y < B.y ? B.y : A.y));  
+    return seed;  
+  }  
+};  
+namespace std { template<> struct hash<Edge3D> { size_t operator()(const Edge3D& e) const { return e.hash(); } }; }  
+ 
+class PolygonXYZ  
+{  
+public:  
+  std::vector<PointXYZ> coordinates;  
+  PolygonXYZ() { }  
+  PolygonXYZ(const std::vector<PointXYZ>& coords);  
+  void push_back(const PointXYZ& p);  
+  bool is_closed() const;  
+  void close();  
+  double signed_area() const;  
+  bool is_clockwise() const;  
+  void make_clockwise();  
+  void make_counterclockwise();  
+  bool contains(const PointXY& p) const;  
+  bool contains(const PolygonXYZ& other) const;  
+};
 
 namespace std
 {

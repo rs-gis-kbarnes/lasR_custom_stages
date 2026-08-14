@@ -368,3 +368,30 @@ void Vector::set_chunk(const Chunk& chunk)
   extent[2] = chunk.xmax;
   extent[3] = chunk.ymax;
 }
+
+bool Vector::write(const std::vector<PolygonXYZ>& poly, int tree_id) 
+{ 
+  if (!dataset) { last_error = "cannot write with uninitialized GDALDataset"; return false; } 
+  if (eGType != wkbPolygon25D) { last_error = "ERROR: The file is not of type POLYGON 25D"; return false; } 
+ 
+  OGRPolygon polygon; 
+  for (const auto& pol : poly) 
+  { 
+    OGRLinearRing ring; 
+    for (const auto& p : pol.coordinates) ring.addPoint(p.x, p.y, p.z); 
+    polygon.addRing(&ring); 
+  } 
+ 
+  OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn()); 
+  feature->SetGeometry(&polygon); 
+  feature->SetField("tree_id", tree_id); 
+ 
+  if (layer->CreateFeature(feature) != OGRERR_NONE) 
+  { 
+    last_error = "ERROR: GDAL failed to create feature."; 
+    OGRFeature::DestroyFeature(feature); 
+    return false; 
+  } 
+  OGRFeature::DestroyFeature(feature); 
+  return true; 
+}

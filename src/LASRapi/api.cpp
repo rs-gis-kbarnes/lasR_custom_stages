@@ -564,6 +564,19 @@ Pipeline transform_with(std::string connect_uid, std::string operation, std::str
   return Pipeline(s);
 }
 
+Pipeline tree_hull3d(std::string attribute, double max_edge, double radius,  
+                      std::vector<std::string> wire_filter, std::string ofile)  
+{  
+  Stage s("tree_hull3d");  
+  s.set("attribute", attribute);  
+  s.set("max_edge", max_edge);  
+  s.set("radius", radius);  
+  s.set("wire_filter", wire_filter);  
+  s.set("output", ofile);  
+  s.set_vector();  
+  return Pipeline(s);  
+}
+
 Pipeline write_las(std::string ofile, std::vector<std::string> filter, bool keep_buffer, unsigned char version, unsigned char pdrf)
 {
   Stage s("write_las");

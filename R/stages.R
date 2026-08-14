@@ -228,7 +228,7 @@ classify_transfer = function(reference_files, dist_threshold = 3, ref_buffer = 2
 #' distance to all its k-nearest neighbors. The points that are farther than the average distance
 #' plus a number of times (multiplier) the standard deviation are considered noise.
 #'
-#' @param k	numeric. The number of neighbours
+#' @param k numeric. The number of neighbours
 #' @param m numeric. Multiplier. The maximum distance will be: ⁠avg distance + m * std deviation⁠
 #' @param class integer. The class to assign to the points that match the condition.
 #'
@@ -1463,6 +1463,59 @@ transform_with = function(stage, operator = "-", store_in_attribute = "", biline
 
   return(ans)
 }
+
+#' 3D concave hull per tree ID  
+#'  
+#' Groups points by a tree segmentation ID stored in a point attribute (e.g. produced by  
+#' `region_growing()` and projected onto points with `transform_with()`), triangulates each  
+#' group independently with a Delaunay triangulation, and extracts its contour as in `hulls()`.  
+#' Because each tree is triangulated separately, the output is a closed, three-dimensional  
+#' polygon per tree (Z is taken from the triangulated vertex heights) rather than a single  
+#' global 2D contour. Setting `max_edge` produces a concave hull instead of a full convex hull,  
+#' exactly as in `triangulate()`/`hulls()`. Optionally, a `radius` and `wire_filter` restrict  
+#' processing to only the tree IDs that have at least one matching "wire" point within `radius`  
+#' map units, skipping every other tree entirely.  
+#'  
+#' @param attribute character. Name of the point attribute holding the integer tree segmentation  
+#' ID (see `add_extrabytes()` + `transform_with()` to project a `region_growing()` raster onto  
+#' points). Must be an attribute of type `int` or `double`; other types raise an error.  
+#' @param max_edge numeric. Maximum triangle edge length threshold used to trim the Delaunay  
+#' triangulation before extracting the contour, exactly as in `triangulate()`. `0` (default)  
+#' keeps every triangle, i.e. produces the convex hull of each tree's points.  
+#' @param radius numeric. If greater than `0`, restrict output to only the tree IDs that have at  
+#' least one point matching `wire_filter` within this radius (map units). `0` (default) disables  
+#' this restriction and processes every tree ID present in the point cloud.  
+#' @param wire_filter character. A point filter string (same DSL as the `filter` argument  
+#' elsewhere in lasR, e.g. `keep_class(14)`) used to flag "wire" points when `radius > 0`.  
+#' Ignored if `radius == 0`.  
+#' @template param-ofile  
+#'  
+#' @template return-vector  
+#'  
+#' @examples  
+#' g <- system.file("extdata", "MixedConifer.las", package = "lasR")  
+#' chm  <- rasterize(1, "max", filter = keep_first())  
+#' lmx  <- local_maximum_raster(chm, 5)  
+#' tree <- region_growing(chm, lmx, max_cr = 10)  
+#' eb   <- add_extrabytes("int", "tree_id", "Tree segmentation ID")  
+#' attr <- transform_with(tree, operator = "=", store_in_attribute = "tree_id", bilinear = FALSE)  
+#' hull3d <- tree_hull3d(attribute = "tree_id", max_edge = 3)  
+#' pipeline <- chm + lmx + tree + eb + attr + hull3d  
+#' ans <- exec(pipeline, on = g)  
+#'  
+#' @seealso  
+#' \link{hulls}  
+#' \link{triangulate}  
+#' \link{region_growing}  
+#' \link{transform_with}  
+#'  
+#' @export  
+#' @md  
+tree_hull3d = function(attribute = "tree_id", max_edge = 0, radius = 0, wire_filter = "", ofile = tempgpkg())  
+{  
+  ofile = normalizePath(ofile, mustWork = FALSE)  
+  .APISTAGES$tree_hull3d(attribute, max_edge, radius, wire_filter, ofile)  
+}  
 
 # ===== W ====
 

@@ -231,6 +231,7 @@ Pipeline sort_points(bool spatial = true);
 Pipeline summarise(double zwbin = 2, double iwbin = 50, std::vector<std::string> metrics = {},  std::vector<std::string> filter = {""});
 Pipeline triangulate(double max_edge = 0, std::vector<std::string> filter = {""}, std::string ofile = "", std::string use_attribute = "Z");
 Pipeline transform_with(std::string connect_uid, std::string operation = "-", std::string store_in_attribute = "", bool bilinear = true);
+Pipeline tree_hull3d(std::string attribute = "tree_id", double max_edge = 0, double radius = 0, std::vector<std::string> wire_filter = {""}, std::string ofile = "");
 Pipeline write_las(std::string ofile, std::vector<std::string> filter = {""}, bool keep_buffer = false, unsigned char version = 0xFF, unsigned char pdrf = 0xFF);
 Pipeline write_copc(std::string ofile, std::vector<std::string> filter = {""}, bool keep_buffer = false, int max_depth = -1, std::string density = "dense");
 Pipeline write_pcd(std::string ofile, bool binary = true);
