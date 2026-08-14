@@ -1,283 +1,281 @@
-#include "treehull3d.h"  
-#include "PointSchema.h"  
-#include "openmp.h"  
-  
-#include <unordered_set>  
-#include <unordered_map>  
-#include <random>  
-  
-#include "delaunator/delaunator.hpp"  
-#include "ogrsf_frmts.h"  
-  
-LASRtreehull3d::LASRtreehull3d()  
-{  
-  vector.set_geometry_type(wkbPolygon25D);  
-  vector.add_field("tree_id", OFTInteger);  
-}  
-  
-// Explicit copy constructor: mirrors Stage::Stage(const Stage&) which never  
-// bitwise-copies PointFilter (owns raw Condition* pointers, would double-free).  
-// wire_pointfilter is instead rebuilt from the stored raw strings.  
-LASRtreehull3d::LASRtreehull3d(const LASRtreehull3d& other) : StageVector(other)  
-{  
-  id_attribute       = other.id_attribute;  
-  max_edge           = other.max_edge;  
-  trim               = other.trim;  
-  radius             = other.radius;  
-  wire_filter_strings = other.wire_filter_strings;  
-  
-  wire_pointfilter = PointFilter(); // fresh, empty  
-  for (const auto& f : wire_filter_strings)  
-    wire_pointfilter.add_condition(f);  
-}  
-  
-bool LASRtreehull3d::set_parameters(const nlohmann::json& stage)  
-{  
-  id_attribute = stage.at("attribute");  
-  max_edge     = stage.at("max_edge");  
-  radius       = stage.at("radius");  
-  trim         = max_edge * max_edge;  
-  
-  wire_filter_strings.clear();  
-  if (stage.contains("wire_filter"))  
-  {  
-    for (const auto& f : stage["wire_filter"])  
-      if (f.is_string() && !f.get<std::string>().empty())  
-        wire_filter_strings.push_back(f.get<std::string>());  
-  }  
-  
-  for (const auto& f : wire_filter_strings)  
-    wire_pointfilter.add_condition(f);  
-  
-  vector = Vector(xmin, ymin, xmax, ymax);  
-  vector.set_geometry_type(wkbPolygon25D);  
-  vector.add_field("tree_id", OFTInteger);  
-  
-  return true;  
-}  
-  
-bool LASRtreehull3d::process(PointCloud*& las)  
-{  
-  // --- validate the tree-id attribute exists (verified idiom: get_attribute_index,  
-  // not AttributeAccessor::exist(), which only reflects lazy-resolution state) ---  
-  int idx = las->header->schema.get_attribute_index(id_attribute);  
-  if (idx == -1)  
-  {  
-    last_error = id_attribute + " is not present in the point cloud";  
-    return false;  
-  }  
-  
-  AttributeType data_type = las->header->schema.attributes[idx].type;  
-  if (data_type != AttributeType::INT32 && data_type != AttributeType::DOUBLE)  
-  {  
-    last_error = "the attribute " + id_attribute + " must be of type 'int' or 'double'";  
-    return false;  
-  }  
-  
-  AttributeAccessor id_accessor(id_attribute);  
-  
-  std::unordered_set<int> detected_ids;  
-  bool restrict_to_wire = radius > 0 && !wire_filter_strings.empty();  
-  
-  // --- PASS 1: fixed-radius search around wire points to find candidate tree ids ---  
-  if (restrict_to_wire)  
-  {  
-    las->build_kdtree();  
-  
-    while (las->read_point())  
-    {  
-      Point* p = &las->point;  
-      if (!wire_pointfilter.filter(p)) continue; // keep only points that PASS the wire filter  
-      // NOTE: PointFilter::filter() returns true when a point is REJECTED (see verified  
-      // PointFilter::filter() body) - a point matching the wire condition is one that  
-      // does NOT get filtered out, so this branch keeps points for which filter() == false.  
-      // (see corrected condition below)  
-    }  
-  
-    // Correct pass, replacing the confused draft above:  
-    las->seek(0);  
-    while (las->read_point())  
-    {  
-      Point* p = &las->point;  
-      if (wire_pointfilter.filter(p)) continue; // rejected by wire_filter -> not a wire point  
-      if (pointfilter.filter(p)) continue;      // also respect stage's own point filter  
-  
-      std::vector<Point> neighbors;  
-      las->query_sphere(*p, radius, neighbors, &pointfilter);  
-  
-      for (auto& np : neighbors)  
-      {  
-        int tid = (int)id_accessor(&np);  
-        detected_ids.insert(tid);  
-      }  
-    }  
-  
-    las->seek(0);  
-  }  
-  
-  // --- PASS 2: bucket point coordinates per tree id ---  
-  std::unordered_map<int, std::vector<double>> coords_by_id; // flat x,y pairs for delaunator  
-  std::unordered_map<int, std::vector<PointXYZ>> pts_by_id;  // xyz for Z-lookup after triangulation  
-  
-  std::default_random_engine gen(std::random_device{}());  
-  std::normal_distribution<double> noise(0.0, 1e-10);  
-  
-  double xoffset = (las->header->min_x + las->header->max_x) / 2;  
-  double yoffset = (las->header->min_y + las->header->max_y) / 2;  
-  
-  while (las->read_point())  
-  {  
-    Point* p = &las->point;  
-    if (pointfilter.filter(p)) continue;  
-  
-    int tid = (int)id_accessor(p);  
-    if (tid == 0) continue; // 0 conventionally means "no tree" from region_growing's raster  
-  
-    if (restrict_to_wire && detected_ids.find(tid) == detected_ids.end()) continue;  
-  
-    coords_by_id[tid].push_back(p->get_x() - xoffset + noise(gen));  
-    coords_by_id[tid].push_back(p->get_y() - yoffset + noise(gen));  
-    pts_by_id[tid].push_back(PointXYZ(p->get_x(), p->get_y(), p->get_z()));  
-  }  
-  
-  // --- PASS 3: per-tree Delaunay triangulation + contour extraction + polygonize ---  
-  tree_polygons.clear();  
-  
-  for (auto& kv : coords_by_id)  
-  {  
-    int tid = kv.first;  
-    std::vector<double>& coords = kv.second;  
-    std::vector<PointXYZ>& pts = pts_by_id[tid];  
-  
-    if (coords.size() < 6) continue; // need >= 3 points  
-  
-    delaunator::Delaunator* d = nullptr;  
-    try  
-    {  
-      d = new delaunator::Delaunator(coords);  
-    }  
-    catch (const std::exception& e)  
-    {  
-      continue; // skip degenerate trees rather than failing the whole stage  
-    }  
-  
-    // Build a lookup from (x,y) rounded key -> z, since delaunator only knows x,y  
-    std::unordered_map<int64_t, double> z_lookup;  
-    auto key_of = [](double x, double y) -> int64_t {  
-      int32_t ix = (int32_t)std::llround(x * 1000.0);  
-      int32_t iy = (int32_t)std::llround(y * 1000.0);  
-      return (int64_t(ix) << 32) ^ (uint32_t)iy;  
-    };  
-    for (auto& p : pts)  
-      z_lookup[key_of(p.x - xoffset, p.y - yoffset)] = p.z;  
-  
-    std::unordered_set<Edge3D> edges;  
-  
-    for (size_t i = 0; i < d->triangles.size(); i += 3)  
-    {  
-      size_t ia = d->triangles[i];  
-      size_t ib = d->triangles[i + 1];  
-      size_t ic = d->triangles[i + 2];  
-  
-      double ax = d->coords[2 * ia], ay = d->coords[2 * ia + 1];  
-      double bx = d->coords[2 * ib], by = d->coords[2 * ib + 1];  
-      double cx = d->coords[2 * ic], cy = d->coords[2 * ic + 1];  
-  
-      double dx1 = bx - ax, dy1 = by - ay;  
-      double dx2 = cx - ax, dy2 = cy - ay;  
-      double edge_ab2 = dx1 * dx1 + dy1 * dy1;  
-      double edge_bc2 = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);  
-      double edge_ca2 = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy);  
-      double max_edge2 = std::max({edge_ab2, edge_bc2, edge_ca2});  
-  
-      bool keep = (trim == 0) || (max_edge2 < trim);  
-      if (!keep) continue;  
-  
-      auto za = z_lookup.count(key_of(ax, ay)) ? z_lookup[key_of(ax, ay)] : 0.0;  
-      auto zb = z_lookup.count(key_of(bx, by)) ? z_lookup[key_of(bx, by)] : 0.0;  
-      auto zc = z_lookup.count(key_of(cx, cy)) ? z_lookup[key_of(cx, cy)] : 0.0;  
-  
-      PointXYZ A(ax + xoffset, ay + yoffset, za);  
-      PointXYZ B(bx + xoffset, by + yoffset, zb);  
-      PointXYZ C(cx + xoffset, cy + yoffset, zc);  
-  
-      Edge3D AB(A, B), BC(B, C), CA(C, A);  
-  
-      if (edges.count(AB) > 0) edges.erase(AB); else edges.insert(AB);  
-      if (edges.count(BC) > 0) edges.erase(BC); else edges.insert(BC);  
-      if (edges.count(CA) > 0) edges.erase(CA); else edges.insert(CA);  
-    }  
-  
-    delete d;  
-  
-    if (edges.empty()) continue;  
-  
-    // Polygonize this tree's boundary edges exactly like LASRboundaries::process()  
-    OGRGeometryCollection gc;  
-    for (const auto& e : edges)  
-    {  
-      OGRLineString ls;  
-      ls.addPoint(e.A.x, e.A.y, e.A.z);  
-      ls.addPoint(e.B.x, e.B.y, e.B.z);  
-      gc.addGeometry(&ls);  
-    }  
-  
-    OGRGeometry* polys = gc.Polygonize();  
-    if (!polys) continue;  
-  
-    if (wkbFlatten(polys->getGeometryType()) == wkbGeometryCollection)  
-    {  
-      OGRGeometryCollection* ogc = polys->toGeometryCollection();  
-      for (int i = 0; i < ogc->getNumGeometries(); ++i)  
-      {  
-        OGRGeometry* geom = ogc->getGeometryRef(i);  
-        if (!geom || wkbFlatten(geom->getGeometryType()) != wkbPolygon) continue;  
-  
-        OGRPolygon* ogrPoly = geom->toPolygon();  
-        OGRLinearRing* ext = ogrPoly->getExteriorRing();  
-        if (!ext) continue;  
-  
-        std::vector<PointXYZ> ring;  
-        int n = ext->getNumPoints();  
-        for (int j = 0; j < n; j++)  
-        {  
-          double zz = ext->getZ(j); // NOTE: GDAL Z-preservation through Polygonize()  
-                                     // is unverified for this build - see known gaps.  
-          if (zz == 0.0)  
-            zz = z_lookup.count(key_of(ext->getX(j) - xoffset, ext->getY(j) - yoffset))  
-                   ? z_lookup[key_of(ext->getX(j) - xoffset, ext->getY(j) - yoffset)] : 0.0;  
-          ring.emplace_back(ext->getX(j), ext->getY(j), zz);  
-        }  
-  
-        PolygonXYZ poly(ring);  
-        poly.close();  
-        tree_polygons.push_back({tid, poly});  
-      }  
-    }  
-  
-    OGRGeometryFactory::destroyGeometry(polys);  
-  }  
-  
-  return true;  
-}  
-  
-void LASRtreehull3d::clear(bool last)  
-{  
-  tree_polygons.clear();  
-}  
-  
-bool LASRtreehull3d::write()  
-{  
-  bool success = true;  
-  
-  #pragma omp critical (write_tree_hull3d)  
-  {  
-    for (auto& kv : tree_polygons)  
-    {  
-      std::vector<PolygonXYZ> single = { kv.second };  
-      if (!vector.write(single, kv.first)) { success = false; break; }  
-    }  
-  }  
-  
-  return success;  
+// src/LASRstages/treehull3d.cpp
+#include "treehull3d.h"
+#include "PointSchema.h"
+#include "openmp.h"
+
+#include <unordered_set>
+#include <unordered_map>
+#include <random>
+#include <algorithm>
+
+#include "delaunator/delaunator.hpp"
+#include "ogrsf_frmts.h"
+
+// ---- helper: quantized (x,y) key for the Z-lookup fallback map ----
+static inline std::pair<long,long> key_of(double x, double y, double eps = 1e-6)
+{
+  return { std::llround(x / eps), std::llround(y / eps) };
+}
+struct PairHash
+{
+  std::size_t operator()(const std::pair<long,long>& p) const
+  {
+    return std::hash<long>{}(p.first) ^ (std::hash<long>{}(p.second) << 1);
+  }
+};
+
+// -------------------- constructor (real definition, NOT '= default' in header) --------------------
+LASRtreehull3d::LASRtreehull3d()
+{
+  vector.set_geometry_type(wkbPolygon25D);
+  vector.add_field("tree_id", OFTInteger);
+}
+
+// -------------------- copy constructor: PointFilter is never bitwise-copied --------------------
+LASRtreehull3d::LASRtreehull3d(const LASRtreehull3d& other) : StageVector(other)
+{
+  id_attribute        = other.id_attribute;
+  max_edge            = other.max_edge;
+  trim                = other.trim;
+  radius              = other.radius;
+  wire_filter_strings = other.wire_filter_strings;
+
+  wire_pointfilter = PointFilter(); // rebuilt fresh, never copied directly
+  for (const auto& f : wire_filter_strings)
+    wire_pointfilter.add_condition(f);
+}
+
+// -------------------- parameters --------------------
+bool LASRtreehull3d::set_parameters(const nlohmann::json& stage)
+{
+  id_attribute = stage.value("attribute", "tree_id");
+  max_edge     = stage.value("max_edge", 0.0);
+  radius       = stage.value("radius", 0.0);
+
+  trim = max_edge * max_edge; // squared, matches LASRtriangulate's own 'trim' convention
+
+  if (stage.contains("wire_filter"))
+    wire_filter_strings = stage.at("wire_filter").get<std::vector<std::string>>();
+
+  wire_pointfilter = PointFilter();
+  for (const auto& f : wire_filter_strings)
+    wire_pointfilter.add_condition(f);
+
+  return true;
+}
+
+// -------------------- main processing --------------------
+bool LASRtreehull3d::process(PointCloud*& las)
+{
+  progress->reset();
+  progress->set_prefix("Per-tree 3D hulls");
+  progress->show();
+
+  // Resolve the tree-id attribute up front and fail early if missing/wrong type
+  int index = las->header->schema.get_attribute_index(id_attribute);
+  if (index == -1)
+  {
+    last_error = "attribute " + id_attribute + " not found in point schema";
+    return false;
+  }
+
+  AttributeType data_type = las->header->schema.attributes[index].type;
+  if (data_type != AttributeType::INT32 && data_type != AttributeType::DOUBLE)
+  {
+    last_error = "the attribute " + id_attribute + " must be of type 'int' or 'double'";
+    return false;
+  }
+
+  AttributeAccessor id_accessor(id_attribute);
+
+  // -------------------- Pass 0 (optional): restrict to tree ids near "wire" points --------------------
+  std::unordered_set<int> detected_ids;
+  bool restrict_ids = (radius > 0.0) && !wire_filter_strings.empty();
+
+  if (restrict_ids)
+  {
+    las->build_kdtree();
+
+    Point* p;
+    while (las->read_point())
+    {
+      p = &las->point;
+      if (pointfilter.filter(p)) continue;        // respect the stage's own global filter
+      if (wire_pointfilter.filter(p)) continue;    // filter() returns true = REJECTED; skip points that don't pass the wire filter
+
+      // 'p' passed the wire filter -> it IS a wire point; search its tree neighborhood
+      std::vector<Point> neighbors;
+      las->query_sphere(*p, radius, neighbors, &pointfilter);
+
+      for (auto& np : neighbors)
+      {
+        int id = (int)id_accessor(&np);
+        if (id != 0) detected_ids.insert(id); // 0 = "no tree" sentinel from region_growing()
+      }
+    }
+
+    las->seek(0);
+  }
+
+  // -------------------- Pass 1: bucket points by tree id --------------------
+  std::unordered_map<int, std::vector<PointXYZ>> pts_by_id;
+
+  double xoffset = (las->header->min_x + las->header->max_x) / 2;
+  double yoffset = (las->header->min_y + las->header->max_y) / 2;
+
+  std::default_random_engine gen(std::random_device{}());
+  std::normal_distribution<double> noise(0.0, 1e-10);
+
+  Point* p;
+  while (las->read_point())
+  {
+    p = &las->point;
+    if (pointfilter.filter(p)) continue;
+
+    int id = (int)id_accessor(p);
+    if (id == 0) continue;                                  // no tree assigned
+    if (restrict_ids && detected_ids.count(id) == 0) continue; // not near a wire
+
+    pts_by_id[id].emplace_back(p->get_x() - xoffset + noise(gen),
+                                p->get_y() - yoffset + noise(gen),
+                                p->get_z());
+  }
+
+  // -------------------- Pass 2: per-tree Delaunay triangulation + contour + polygonize --------------------
+  tree_polygons.clear();
+
+  for (auto& kv : pts_by_id)
+  {
+    int id = kv.first;
+    std::vector<PointXYZ>& pts = kv.second;
+    if (pts.size() < 3) continue;
+
+    std::vector<double> coords;
+    coords.reserve(pts.size() * 2);
+    std::unordered_map<std::pair<long,long>, double, PairHash> z_lookup;
+
+    for (auto& pt : pts)
+    {
+      coords.push_back(pt.x);
+      coords.push_back(pt.y);
+      z_lookup[key_of(pt.x, pt.y)] = pt.z;
+    }
+
+    delaunator::Delaunator* d = nullptr;
+    try
+    {
+      d = new delaunator::Delaunator(coords);
+    }
+    catch (const std::exception& e)
+    {
+      last_error = std::string("In delaunator (tree ") + std::to_string(id) + "): " + e.what();
+      continue; // skip this tree, keep processing others
+    }
+
+    // ---- extract boundary edges (same toggle logic as LASRtriangulate::contour) ----
+    std::unordered_set<Edge3D> edges;
+
+    for (unsigned int i = 0; i < d->triangles.size(); i += 3)
+    {
+      PointXYZ A(coords[2*d->triangles[i]],   coords[2*d->triangles[i]+1],   0);
+      PointXYZ B(coords[2*d->triangles[i+1]], coords[2*d->triangles[i+1]+1], 0);
+      PointXYZ C(coords[2*d->triangles[i+2]], coords[2*d->triangles[i+2]+1], 0);
+
+      A.z = z_lookup[key_of(A.x, A.y)];
+      B.z = z_lookup[key_of(B.x, B.y)];
+      C.z = z_lookup[key_of(C.x, C.y)];
+
+      double dx1 = B.x - A.x, dy1 = B.y - A.y;
+      double dx2 = C.x - B.x, dy2 = C.y - B.y;
+      double dx3 = A.x - C.x, dy3 = A.y - C.y;
+      double max_edge2 = std::max({dx1*dx1+dy1*dy1, dx2*dx2+dy2*dy2, dx3*dx3+dy3*dy3});
+
+      bool keep = (trim == 0) || (max_edge2 < trim);
+      if (!keep) continue;
+
+      Edge3D AB(A, B), BC(B, C), CA(C, A);
+      if (edges.count(AB) > 0) edges.erase(AB); else edges.insert(AB);
+      if (edges.count(BC) > 0) edges.erase(BC); else edges.insert(BC);
+      if (edges.count(CA) > 0) edges.erase(CA); else edges.insert(CA);
+    }
+
+    delete d;
+
+    if (edges.empty()) continue;
+
+    // ---- polygonize (2D geometry collection, Z restored from z_lookup afterward) ----
+    OGRGeometryCollection gc;
+    for (const auto& e : edges)
+    {
+      OGRLineString ls;
+      ls.addPoint(e.A.x, e.A.y);
+      ls.addPoint(e.B.x, e.B.y);
+      gc.addGeometry(&ls);
+    }
+
+    OGRGeometry* polys = gc.Polygonize();
+    if (!polys) continue;
+
+    if (wkbFlatten(polys->getGeometryType()) == wkbGeometryCollection)
+    {
+      OGRGeometryCollection* ogc = polys->toGeometryCollection();
+
+      for (int i = 0; i < ogc->getNumGeometries(); ++i)
+      {
+        OGRGeometry* geom = ogc->getGeometryRef(i);
+        if (!geom || wkbFlatten(geom->getGeometryType()) != wkbPolygon) continue;
+
+        OGRPolygon* ogrPoly = geom->toPolygon();
+        OGRLinearRing* ext = ogrPoly->getExteriorRing();
+        if (!ext) continue;
+
+        std::vector<PointXYZ> ring;
+        int n = ext->getNumPoints();
+        for (int j = 0; j < n; j++)
+        {
+          double x = ext->getX(j);
+          double y = ext->getY(j);
+          double zz = ext->getZ(j); // NOTE: GDAL Z-preservation through Polygonize() is
+                                     // unverified for this build - falls back below if 0.
+          if (zz == 0.0)
+          {
+            auto it = z_lookup.find(key_of(x, y));
+            zz = (it != z_lookup.end()) ? it->second : 0.0;
+          }
+          ring.emplace_back(x, y, zz);
+        }
+
+        PolygonXYZ poly(ring);
+        poly.close();
+        tree_polygons[id] = poly; // one exterior ring per tree; keeps the last if multiple
+      }
+    }
+
+    OGRGeometryFactory::destroyGeometry(polys);
+  }
+
+  return true;
+}
+
+// -------------------- clear / write --------------------
+void LASRtreehull3d::clear(bool last)
+{
+  tree_polygons.clear();
+}
+
+bool LASRtreehull3d::write()
+{
+  bool success = true;
+
+  #pragma omp critical (write_tree_hull3d)
+  {
+    for (const auto& kv : tree_polygons)
+    {
+      int id = kv.first;
+      const PolygonXYZ& poly = kv.second;
+      success = success && vector.write(poly, id);
+    }
+  }
+
+  return success;
 }

@@ -35,7 +35,7 @@ private:
  
   std::unordered_map<int, std::vector<double>> coords_by_id; 
   std::unordered_map<int, std::vector<PointXYZ>> pts_by_id; 
-  std::unordered_map<int, std::vector<PolygonXYZ>> tree_polygons; 
+  std::unordered_map<int, PolygonXYZ> tree_polygons;
 }; 
  
 #endif
