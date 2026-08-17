@@ -12,7 +12,7 @@ namespace delaunator { class Delaunator; }
 class LASRtreehull3d : public StageVector 
 { 
 public: 
-  LASRtreehull3d() = default; 
+  LASRtreehull3d(); //declare only, imp in cpp
   LASRtreehull3d(const LASRtreehull3d& other); // explicit: must rebuild wire_pointfilter, see .cpp 
  
   bool process(PointCloud*& las) override; 
@@ -29,6 +29,7 @@ public:
 private: 
   std::string id_attribute = "tree_id"; 
   double max_edge = 0; 
+  double trim = 0;
   double radius = 0; 
   std::vector<std::string> wire_filter_strings; // raw filter strings, source of truth for wire_pointfilter 
   PointFilter wire_pointfilter;                 // rebuilt from wire_filter_strings in every copy, never bitwise-copied 

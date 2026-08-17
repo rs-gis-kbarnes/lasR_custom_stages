@@ -18,7 +18,7 @@ public:
   bool write(const PointXYZAttrs& p);
   bool write(const std::vector<TriangleXYZ>& triangles);
   bool write(const std::vector<PolygonXY>& poly);
-  bool write(const std::vector<PolygonXYZ>& poly, int tree_id);
+  bool write(const PolygonXYZ& poly, int tree_id);
   void add_field(const std::string& name, OGRFieldType type);
   void set_chunk(const Chunk& chunk);
   int get_dupfid() const { return dupfid; };
