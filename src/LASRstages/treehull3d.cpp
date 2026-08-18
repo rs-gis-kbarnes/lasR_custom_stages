@@ -69,13 +69,15 @@ bool LASRtreehull3d::process(PointCloud*& las)
 {
   progress->reset();
   progress->set_prefix("Per-tree 3D hulls");
-  progress->show();
 
   // Resolve the tree-id attribute up front and fail early if missing/wrong type
   int index = las->header->schema.get_attribute_index(id_attribute);
   if (index == -1)
   {
     last_error = "attribute " + id_attribute + " not found in point schema";
+
+    progress->done(); //proper pregress reporting
+
     return false;
   }
 
@@ -83,6 +85,9 @@ bool LASRtreehull3d::process(PointCloud*& las)
   if (data_type != AttributeType::INT32 && data_type != AttributeType::DOUBLE)
   {
     last_error = "the attribute " + id_attribute + " must be of type 'int' or 'double'";
+
+    progress->done(); //proper pregress reporting
+    
     return false;
   }
 
@@ -144,10 +149,15 @@ bool LASRtreehull3d::process(PointCloud*& las)
   // -------------------- Pass 2: per-tree Delaunay triangulation + contour + polygonize --------------------
   tree_polygons.clear();
 
+  progress->set_total(pts_by_id.size()); //proper pregress reporting
   for (auto& kv : pts_by_id)
   {
     int id = kv.first;
     std::vector<PointXYZ>& pts = kv.second;
+
+    (*progress)++; //proper pregress reporting
+    progress->show(); //proper pregress reporting
+
     if (pts.size() < 3) continue;
 
     std::vector<double> coords;
@@ -253,6 +263,8 @@ bool LASRtreehull3d::process(PointCloud*& las)
 
     OGRGeometryFactory::destroyGeometry(polys);
   }
+
+  progress->done(); //proper pregress reporting
 
   return true;
 }
