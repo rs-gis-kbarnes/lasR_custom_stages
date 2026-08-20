@@ -393,3 +393,22 @@ bool Vector::write(const PolygonXYZ& poly, int tree_id)
   OGRFeature::DestroyFeature(feature);  
   return true;  
 }
+
+bool Vector::finalize_extent()
+{
+    if (!dataset || !layer) return true; // nothing to finalize  
+    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to push  
+
+    // OGRLayer::SetExtent() is not implemented for OGRGeoPackageLayer (only  
+    // OGRShapeLayer implements it), so force the extent via GPKG's own  
+    // SQLite metadata table instead.  
+    const char* layer_name = layer->GetName();
+    const char* sql = CPLSPrintf(
+        "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",
+        bbox[0], bbox[1], bbox[2], bbox[3], layer_name);
+
+    OGRLayer* result = dataset->ExecuteSQL(sql, nullptr, nullptr);
+    if (result) dataset->ReleaseResultSet(result);
+
+    return true;
+}
