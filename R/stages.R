@@ -1559,12 +1559,12 @@ tree_hull3d = function(attribute = "tree_id", max_edge = 0, radius = 0, wire_fil
 #'
 #' @export
 #' @md
-tree_seed_sphere = function(connect_uid, hag_attribute = "HAG", radius_multiplier = 1.0, ofile = tempgpkg())
-{
-  ofile = normalizePath(ofile, mustWork = FALSE)
-  uid = get_stage_info(connect_uid)$uid
-  .APISTAGES$tree_seed_sphere(uid, hag_attribute, radius_multiplier, ofile)
-}
+tree_seed_sphere = function(connect_uid, hag_attribute = "HAG", radius_multiplier = 1.0, ofile = tempgpkg())  
+{  
+  ofile = normalizePath(ofile, mustWork = FALSE)  
+  info = .APIOPERATIONS$get_stage_info(connect_uid)  
+  .APISTAGES$tree_seed_sphere(info[["uid"]], hag_attribute, radius_multiplier, ofile)  
+}  
 
 #' Test tree seed spheres for intersection with wire/strike points
 #'
@@ -1604,11 +1604,11 @@ tree_seed_sphere = function(connect_uid, hag_attribute = "HAG", radius_multiplie
 #'
 #' @export
 #' @md
-tree_wire_intersect = function(connect_uid, search_radius = 250, filter = "", ofile = tempgpkg())
-{
-  ofile = normalizePath(ofile, mustWork = FALSE)
-  uid = get_stage_info(connect_uid)$uid
-  .APISTAGES$tree_wire_intersect(uid, search_radius, filter, ofile)
+tree_wire_intersect = function(connect_uid, search_radius = 250, filter = "", ofile = tempgpkg())  
+{  
+  ofile = normalizePath(ofile, mustWork = FALSE)  
+  info = .APIOPERATIONS$get_stage_info(connect_uid)  
+  .APISTAGES$tree_wire_intersect(info[["uid"]], search_radius, filter, ofile)  
 }
 # ===== W ====
 
