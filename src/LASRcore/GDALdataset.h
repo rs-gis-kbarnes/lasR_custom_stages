@@ -11,6 +11,7 @@
 
 class GDALdataset
 {
+	friend class TransactionGuard; // Allow TransactionGuard to access the protected dataset member
 public:
   GDALdataset();
   // GDALdataset(const GDALdataset& other);
@@ -26,6 +27,8 @@ public:
   bool set_crs(const CRS& crs);
   bool is_raster() const { return dType == GDALDatasetType::RASTER; }
   bool is_vector() const { return dType == GDALDatasetType::VECTOR; }
+  //add public dataset access for transaction guard in treehull3d
+  GDALDataset* get_dataset() const { return dataset.get(); }
 
   enum warnings { DUPFID };
   static void initialize_gdal();

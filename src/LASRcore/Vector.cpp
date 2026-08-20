@@ -3,9 +3,9 @@
 #include "print.h"  
 
 #include "cpl_error.h"  
-#include "cpl_string.h"   // NEW: for CPLSPrintf/CPLStrdup used by finalize_extent()  
+#include "cpl_string.h"  
 
-#include <cmath>
+#include <cmath>  
 
 Vector::Vector() : GDALdataset()
 {
@@ -258,52 +258,40 @@ bool Vector::write(const PointXYZAttrs& p)
 
 bool Vector::write(const std::vector<TriangleXYZ>& triangles)
 {
-  if (!dataset)
-  {
-    last_error = "cannot write with uninitialized GDALDataset"; // # nocov
-    return false; // # nocov
-  }
+    TransactionGuard tg(*this); // batch all CreateFeature() calls into one transaction  
 
-  if (eGType != wkbMultiPolygon25D)
-  {
-    last_error = "ERROR: The file is not of type MULTIPOLYGON"; // # nocov
-    return false; // # nocov
-  }
+    OGRMultiPolygon triangulation;
+    for (auto& tri : triangles)
+    {
+        PointXYZ centroid = tri.centroid();
+        if (!(centroid.x >= extent[0] && centroid.x <= extent[2] && centroid.y >= extent[1] && centroid.y <= extent[3]))
+            continue;
 
-  OGRMultiPolygon triangulation;
-  for (auto& tri : triangles)
-  {
-    PointXYZ centroid = tri.centroid();
-    if (!(centroid.x >= extent[0] && centroid.x <= extent[2] && centroid.y >= extent[1] && centroid.y <= extent[3]))
-      continue;
+        update_bbox(tri); // accumulate true written extent  
 
-	update_bbox(tri);
+        OGRLinearRing ring;
+        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
+        ring.addPoint(tri.B.x, tri.B.y, tri.B.z);
+        ring.addPoint(tri.C.x, tri.C.y, tri.C.z);
+        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
 
-    OGRLinearRing ring;
-    ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
-    ring.addPoint(tri.B.x, tri.B.y, tri.B.z);
-    ring.addPoint(tri.C.x, tri.C.y, tri.C.z);
-    ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
-    //feature->SetField("Attribute", std::get<3>(points[j]));
+        OGRPolygon triangle;
+        triangle.addRing(&ring);
+        triangulation.addGeometry(&triangle);
+    }
 
-    OGRPolygon triangle;
-    triangle.addRing(&ring);
+    OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feature->SetGeometry(&triangulation);
 
-    triangulation.addGeometry(&triangle);
-  }
+    if (layer->CreateFeature(feature) != OGRERR_NONE)
+    {
+        last_error = "ERROR: GDAL failed to create feature.";
+        OGRFeature::DestroyFeature(feature);
+        return false;
+    }
 
-  OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
-  feature->SetGeometry(&triangulation);
-
-  if (layer->CreateFeature(feature) != OGRERR_NONE)
-  {
-    last_error = "ERROR: GDAL failed to create feature."; // # nocov
-    OGRFeature::DestroyFeature(feature); // # nocov
-    return false; // # nocov
-  }
-
-  OGRFeature::DestroyFeature(feature);
-  return true;
+    OGRFeature::DestroyFeature(feature);
+    return true;
 }
 
 bool Vector::write(const std::vector<PolygonXY>& poly)
@@ -359,15 +347,80 @@ bool Vector::write(const std::vector<PolygonXY>& poly)
   return true;
 }
 
+void Vector::add_field(const std::string& name, OGRFieldType type)
+{
+  fields.push_back({name, type});
+}
+
+void Vector::set_chunk(const Chunk& chunk)
+{
+  extent[0] = chunk.xmin;
+  extent[1] = chunk.ymin;
+  extent[2] = chunk.xmax;
+  extent[3] = chunk.ymax;
+}
+
+
+// -------------------- bbox tracking --------------------  
+
+void Vector::update_bbox(const Shape& s)
+{
+    if (s.xmin() < bbox[0]) bbox[0] = s.xmin();
+    if (s.ymin() < bbox[1]) bbox[1] = s.ymin();
+    if (s.xmax() > bbox[2]) bbox[2] = s.xmax();
+    if (s.ymax() > bbox[3]) bbox[3] = s.ymax();
+}
+
+void Vector::update_bbox(const PolygonXYZ& poly)
+{
+    for (const auto& p : poly.coordinates)
+    {
+        if (p.x < bbox[0]) bbox[0] = p.x;
+        if (p.y < bbox[1]) bbox[1] = p.y;
+        if (p.x > bbox[2]) bbox[2] = p.x;
+        if (p.y > bbox[3]) bbox[3] = p.y;
+    }
+}
+
+// -------------------- per-tree hull write --------------------  
+
+bool Vector::write(const PolygonXYZ& poly, int tree_id)
+{
+    if (poly.coordinates.empty()) return true;
+
+    update_bbox(poly);
+
+    OGRLinearRing ring;
+    for (const auto& p : poly.coordinates)
+        ring.addPoint(p.x, p.y, p.z);
+    ring.closeRings();
+
+    OGRPolygon polygon;
+    polygon.addRing(&ring);
+
+    OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feature->SetGeometry(&polygon);
+    feature->SetField("tree_id", tree_id);
+
+    if (layer->CreateFeature(feature) != OGRERR_NONE)
+    {
+        last_error = "ERROR: GDAL failed to create feature.";
+        OGRFeature::DestroyFeature(feature);
+        return false;
+    }
+
+    OGRFeature::DestroyFeature(feature);
+    return true;
+}
+
 bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
 {
-    if (!dataset) { last_error = "cannot write with uninitialized GDALDataset"; return false; }
-    if (eGType != wkbMultiPolygon25D) { last_error = "ERROR: The file is not of type MULTIPOLYGON"; return false; }
+    if (triangles.empty()) return true;
 
     OGRMultiPolygon mesh;
     for (const auto& tri : triangles)
     {
-        update_bbox(tri); // NEW  
+        update_bbox(tri);
 
         OGRLinearRing ring;
         ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
@@ -395,86 +448,57 @@ bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
     return true;
 }
 
-void Vector::add_field(const std::string& name, OGRFieldType type)
+// -------------------- per-tree mesh write --------------------  
+
+bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
 {
-  fields.push_back({name, type});
-}
+    if (!dataset || !layer) return false;
+    if (triangles.empty()) return false;
 
-void Vector::set_chunk(const Chunk& chunk)
-{
-  extent[0] = chunk.xmin;
-  extent[1] = chunk.ymin;
-  extent[2] = chunk.xmax;
-  extent[3] = chunk.ymax;
-}
+    OGRMultiPolygon mesh;
+    for (const auto& tri : triangles)
+    {
+        update_bbox(tri); // TriangleXYZ derives from Shape -> xmin/xmax/ymin/ymax available  
 
-bool Vector::write(const PolygonXYZ& poly, int tree_id)
-{
-    if (!dataset) { last_error = "cannot write with uninitialized GDALDataset"; return false; }
-    if (eGType != wkbPolygon25D) { last_error = "ERROR: The file is not of type POLYGON 25D"; return false; }
+        OGRLinearRing ring;
+        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
+        ring.addPoint(tri.B.x, tri.B.y, tri.B.z);
+        ring.addPoint(tri.C.x, tri.C.y, tri.C.z);
+        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
 
-    OGRPolygon polygon;
-    OGRLinearRing ring;
-    for (const auto& p : poly.coordinates)
-        ring.addPoint(p.x, p.y, p.z);
-    polygon.addRing(&ring);
-
-    update_bbox(poly); // NEW  
+        OGRPolygon facet;
+        facet.addRing(&ring);
+        mesh.addGeometry(&facet);
+    }
 
     OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    feature->SetGeometry(&polygon);
     feature->SetField("tree_id", tree_id);
+    feature->SetGeometry(&mesh);
 
-    if (layer->CreateFeature(feature) != OGRERR_NONE)
-    {
-        last_error = "ERROR: GDAL failed to create feature.";
-        OGRFeature::DestroyFeature(feature);
-        return false;
-    }
+    bool ok = (layer->CreateFeature(feature) == OGRERR_NONE);
+    if (!ok) last_error = "ERROR: GDAL failed to create feature."; // # nocov  
 
     OGRFeature::DestroyFeature(feature);
-    return true;
+    return ok;
 }
 
-void Vector::update_bbox(const Shape& s)
-{
-    if (s.xmin() < bbox[0]) bbox[0] = s.xmin();
-    if (s.ymin() < bbox[1]) bbox[1] = s.ymin();
-    if (s.xmax() > bbox[2]) bbox[2] = s.xmax();
-    if (s.ymax() > bbox[3]) bbox[3] = s.ymax();
-}
-
-void Vector::update_bbox(const PolygonXYZ& poly)
-{
-    for (const auto& p : poly.coordinates)
-    {
-        if (p.x < bbox[0]) bbox[0] = p.x;
-        if (p.y < bbox[1]) bbox[1] = p.y;
-        if (p.x > bbox[2]) bbox[2] = p.x;
-        if (p.y > bbox[3]) bbox[3] = p.y;
-    }
-}
+// -------------------- extent finalize (GPKG has no OGRLayer::SetExtent) --------------------  
 
 bool Vector::finalize_extent()
 {
-    if (!dataset || !layer) return true; // nothing to finalize  
-    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to finalize  
+    if (!dataset || !layer) return true; // nothing to finalize  
+    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to push  
 
+    // OGRLayer::SetExtent() is not implemented for OGRGeoPackageLayer (only  
+    // OGRShapeLayer implements it), so force the extent via GPKG's own  
+    // SQLite metadata table instead.  
     const char* layer_name = layer->GetName();
+    char* sql = CPLSPrintf(
+        "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",
+        bbox[0], bbox[1], bbox[2], bbox[3], layer_name);
 
-    char* sql = CPLStrdup(CPLSPrintf(
-        "UPDATE gpkg_contents SET min_x=%.10f, min_y=%.10f, max_x=%.10f, max_y=%.10f WHERE table_name='%s'",
-        bbox[0], bbox[1], bbox[2], bbox[3], layer_name));
-
-    CPLErrorReset();
-    dataset->ExecuteSQL(sql, nullptr, nullptr); // non-SELECT statements return nullptr even on success  
-    CPLFree(sql);
-
-    if (CPLGetLastErrorType() == CE_Failure)
-    {
-        last_error = "ERROR: failed to update gpkg_contents extent.";
-        return false;
-    }
+    OGRLayer* result = dataset->ExecuteSQL(sql, nullptr, nullptr);
+    if (result) dataset->ReleaseResultSet(result);
 
     return true;
 }
