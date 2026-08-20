@@ -1,121 +1,111 @@
-#include "treewireintersect.h"
 #include "treeseedsphere.h"
-#include "PointCloud.h"
+#include "localmaximum.h"
 
 #include <cmath>
+#include <unordered_map>
 
-LASRtreewireintersect::LASRtreewireintersect()
+bool LASRtreeseedsphere::set_parameters(const nlohmann::json& stage)
 {
-  // Allocated once per top-level instance; copied by shared_ptr (not
-  // duplicated) into every clone(), so all clones/chunks share one counter.
-  hit_counter = std::make_shared<unsigned int>(0);
-}
+  hag_attribute = stage.value("hag_attribute", hag_attribute);
+  radius_multiplier = stage.value("radius_multiplier", radius_multiplier);
 
-bool LASRtreewireintersect::set_parameters(const nlohmann::json& stage)
-{
-  search_radius = stage.value("search_radius", search_radius);
-
+  // Output: one wkbPoint25D feature per seed, carrying the derived radius
+  // and the HAG value it was derived from as real-valued fields. These are
+  // populated automatically by Vector::write(seeds, true) because they are
+  // registered here via add_field() and looked up via PointLAS::extrabytes
+  // in Vector::write's field-population loop (same mechanism local_maximum
+  // uses for its use_attribute field -- see Vector.cpp L129-151).
   vector = Vector(xmin, ymin, xmax, ymax);
   vector.set_geometry_type(wkbPoint25D);
+  vector.add_field("radius", OFTReal);
+  vector.add_field(hag_attribute, OFTReal);
 
   return true;
 }
 
-bool LASRtreewireintersect::connect(const std::list<std::unique_ptr<Stage>>& pipeline, const std::string& uid)
+bool LASRtreeseedsphere::connect(const std::list<std::unique_ptr<Stage>>& pipeline, const std::string& uid)
 {
   Stage* s = search_connection(pipeline, uid);
   if (s == nullptr) return false;
 
-  LASRtreeseedsphere* p = dynamic_cast<LASRtreeseedsphere*>(s);
+  // Single upstream connection: must be a local_maximum stage.
+  // Mirrors LASRnnmetrics::connect() (nnmetrics.cpp L133-150).
+  LASRlocalmaximum* p = dynamic_cast<LASRlocalmaximum*>(s);
   if (p)
   {
     set_connection(p);
   }
   else
   {
-    last_error = "Incompatible stage combination for 'tree_wire_intersect': expected 'tree_seed_sphere'";
+    last_error = "Incompatible stage combination for 'tree_seed_sphere': expected 'local_maximum'";
     return false;
   }
 
   return true;
 }
 
-bool LASRtreewireintersect::process(PointCloud*& las)
+bool LASRtreeseedsphere::process(PointCloud*& las)
 {
+  // 'las' is unused: need_points() == false means the engine may pass a
+  // null/unpopulated point cloud here. All data comes from the upstream
+  // LASRlocalmaximum connection instead (mirrors LASRnnmetrics::process()
+  // pattern of pulling get_maxima() from the connected stage).
   auto it = connections.begin();
-  LASRtreeseedsphere* seed_stage = dynamic_cast<LASRtreeseedsphere*>(it->second);
-  if (seed_stage == nullptr)
+  LASRlocalmaximum* lmx = dynamic_cast<LASRlocalmaximum*>(it->second);
+  if (lmx == nullptr)
   {
-    last_error = "invalid dynamic cast. Expecting a pointer to LASRtreeseedsphere";
+    last_error = "invalid dynamic cast. Expecting a pointer to LASRlocalmaximum";
     return false;
   }
 
-  las->build_kdtree();
+  const auto& maxima = lmx->get_maxima();
+  seeds.clear();
+  seeds.reserve(maxima.size());
 
-  const auto& seeds = seed_stage->get_seeds();
-  hits.clear();
-
-  for (const auto& seed : seeds)
+  for (const auto& ttop : maxima)
   {
-    double radius = seed.get_extrabyte("radius");
-    if (std::isnan(radius) || radius <= 0) continue;
+    double hag = ttop.get_extrabyte(hag_attribute);
 
-    Sphere sph(seed.x, seed.y, seed.z, radius);
+    // Skip ttops with no valid HAG (attribute missing or non-positive height).
+    if (std::isnan(hag) || hag <= 0) continue;
 
-    Point pp(&las->header->schema);
-    pp.set_x(seed.x);
-    pp.set_y(seed.y);
-    pp.set_z(seed.z);
+    double ground_z = ttop.z - hag; // "drop to ground"
+    double radius = hag * radius_multiplier; // "buffer to sphere by HAG"
 
-    std::vector<Point> candidates;
-    las->query_sphere(pp, search_radius, candidates, &pointfilter);
+    PointLAS seed;               // default ctor zero-initializes via memset (PointLAS.cpp L10-13)
+    seed.x = ttop.x;
+    seed.y = ttop.y;
+    seed.z = ground_z;
+    seed.FID = ttop.FID;         // preserves the tree id from local_maximum's unicity counter
 
-    for (auto& c : candidates)
-    {
-      double cx = c.get_x();
-      double cy = c.get_y();
-      double cz = c.get_z();
+    seed.extrabytes = new std::unordered_map<std::string, double>();
+    (*seed.extrabytes)["radius"] = radius;
+    (*seed.extrabytes)[hag_attribute] = hag;
 
-      if (!sph.contains(cx, cy, cz)) continue;
-
-      PointLAS hit;
-      hit.x = cx;
-      hit.y = cy;
-      hit.z = cz;
-
-      // Serialize the increment: hit_counter is shared across clones/threads,
-      // so a plain (*hit_counter)++ outside a critical section is a data race
-      // on the underlying unsigned int, independent of the FID-uniqueness issue.
-      #pragma omp critical (assign_wire_hit_ids)
-      {
-        hit.FID = (*hit_counter)++;
-      }
-
-      hits.push_back(std::move(hit));
-    }
+    seeds.push_back(std::move(seed));
   }
 
   return true;
 }
 
-bool LASRtreewireintersect::write()
+bool LASRtreeseedsphere::write()
 {
   if (ofile.empty()) return true;
-  if (hits.empty()) return true;
+  if (seeds.empty()) return true;
 
   bool success;
-  #pragma omp critical (write_tree_wire_intersect)
+  #pragma omp critical (write_tree_seed_sphere)
   {
-    success = vector.write(hits, false); // false => plain xyz, no fields
+    success = vector.write(seeds, true); // true => write standard fields + registered extra fields (radius, HAG)
   }
   return success;
 }
 
-void LASRtreewireintersect::clear(bool last)
+void LASRtreeseedsphere::clear(bool last)
 {
-  hits.clear();
-  // Do NOT reset hit_counter here -- it must persist across chunks and stay
-  // shared across clones. Resetting it reintroduces duplicate-FID collisions.
+  seeds.clear();
 
+  // Consistent with LASRtreehull3d::clear()'s established pattern of
+  // finalizing the output vector's extent on the last chunk.
   if (last) vector.finalize_extent();
 }

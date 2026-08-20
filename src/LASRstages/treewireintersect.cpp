@@ -4,13 +4,17 @@
 
 #include <cmath>
 
+LASRtreewireintersect::LASRtreewireintersect()
+{
+  // Allocated once per top-level instance; copied by shared_ptr (not
+  // duplicated) into every clone(), so all clones/chunks share one counter.
+  hit_counter = std::make_shared<unsigned int>(0);
+}
+
 bool LASRtreewireintersect::set_parameters(const nlohmann::json& stage)
 {
   search_radius = stage.value("search_radius", search_radius);
 
-  // Output: plain xyz points, no attribute fields registered. write(hits, false)
-  // skips all field population (Vector.cpp write_attributes==false branch), so
-  // no add_field() calls are needed here.
   vector = Vector(xmin, ymin, xmax, ymax);
   vector.set_geometry_type(wkbPoint25D);
 
@@ -22,7 +26,6 @@ bool LASRtreewireintersect::connect(const std::list<std::unique_ptr<Stage>>& pip
   Stage* s = search_connection(pipeline, uid);
   if (s == nullptr) return false;
 
-  // Single upstream connection: must be a tree_seed_sphere stage.
   LASRtreeseedsphere* p = dynamic_cast<LASRtreeseedsphere*>(s);
   if (p)
   {
@@ -47,9 +50,6 @@ bool LASRtreewireintersect::process(PointCloud*& las)
     return false;
   }
 
-  // query_sphere() throws std::runtime_error if the KD-tree is not built yet
-  // (PointCloud.cpp L600-604). Build it once per chunk before the loop,
-  // mirroring LASRnnmetrics::process() (nnmetrics.cpp L58-59).
   las->build_kdtree();
 
   const auto& seeds = seed_stage->get_seeds();
@@ -60,8 +60,6 @@ bool LASRtreewireintersect::process(PointCloud*& las)
     double radius = seed.get_extrabyte("radius");
     if (std::isnan(radius) || radius <= 0) continue;
 
-    // Exact geometric test shape: true HAG-derived sphere centered at the
-    // seed (already dropped to ground by tree_seed_sphere).
     Sphere sph(seed.x, seed.y, seed.z, radius);
 
     Point pp(&las->header->schema);
@@ -69,12 +67,6 @@ bool LASRtreewireintersect::process(PointCloud*& las)
     pp.set_y(seed.y);
     pp.set_z(seed.z);
 
-    // Coarse speed-up query: over-estimated search_radius, restricted by
-    // this stage's own generic pointfilter (populated from the pipeline's
-    // filter= argument -- e.g. filter = keep_class(14) selects "wire"
-    // points as candidates). This is NOT a generic input-restriction filter
-    // in the usual sense; for this stage it specifically plays the role of
-    // the "wire/strike" class selector.
     std::vector<Point> candidates;
     las->query_sphere(pp, search_radius, candidates, &pointfilter);
 
@@ -84,14 +76,20 @@ bool LASRtreewireintersect::process(PointCloud*& las)
       double cy = c.get_y();
       double cz = c.get_z();
 
-      // Exact test against the true (HAG-derived) sphere, not search_radius.
       if (!sph.contains(cx, cy, cz)) continue;
 
-      PointLAS hit;              // zero-initialized via memset (PointLAS.cpp L10-13)
+      PointLAS hit;
       hit.x = cx;
       hit.y = cy;
       hit.z = cz;
-      hit.FID = hit_counter++;   // unique FID per hit -- required, see header comment
+
+      // Serialize the increment: hit_counter is shared across clones/threads,
+      // so a plain (*hit_counter)++ outside a critical section is a data race
+      // on the underlying unsigned int, independent of the FID-uniqueness issue.
+      #pragma omp critical (assign_wire_hit_ids)
+      {
+        hit.FID = (*hit_counter)++;
+      }
 
       hits.push_back(std::move(hit));
     }
@@ -116,7 +114,8 @@ bool LASRtreewireintersect::write()
 void LASRtreewireintersect::clear(bool last)
 {
   hits.clear();
-  hit_counter = 0;
+  // Do NOT reset hit_counter here -- it must persist across chunks and stay
+  // shared across clones. Resetting it reintroduces duplicate-FID collisions.
 
   if (last) vector.finalize_extent();
 }

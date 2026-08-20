@@ -6,55 +6,45 @@
 #include "Shape.h"
 #include "PointLAS.h"
 
-#include <vector>
+#include <memory>
 #include <string>
+#include <vector>
 
 class LASRtreeseedsphere; // fwd decl, full type only needed in the .cpp
 
-// Stage 2 of the tree/wire workflow.
-//
-// Consumes sphere seeds produced by an upstream tree_seed_sphere() stage.
-// For each seed:
-//   1. Coarse speed-up: las->query_sphere(seed_center, search_radius, ...)
-//      restricted by this stage's own generic filter= (e.g. keep_class(14)
-//      to select "wire"/strike points) -- this is the "find trees within
-//      arbitrary large distance of wire points" speed-up step.
-//   2. Exact test: Sphere::contains(x,y,z) on each coarse candidate, using
-//      the seed's real (HAG-derived) radius, not search_radius.
-// Surviving points are written as plain xyz features (no attribute fields).
 class LASRtreewireintersect : public StageVector
 {
 public:
-  LASRtreewireintersect() = default;
+  LASRtreewireintersect();                              // NEW: must initialize hit_counter
+  LASRtreewireintersect(const LASRtreewireintersect& other) = default; // shared_ptr copies fine by default
 
   bool process(PointCloud*& las) override;
   bool write() override;
   void clear(bool last) override;
 
   bool need_points() const override { return true; }
-  double need_buffer() const override { return search_radius; } // cross-tile candidates must be included
-  bool is_streamable() const override { return false; }         // needs all seeds resolved via connect()
+  double need_buffer() const override { return search_radius; }
+  bool is_parallelized() const override { return true; }   // NEW: explicit, matches localmaximum/nnmetrics precedent
 
   bool set_parameters(const nlohmann::json&) override;
   bool connect(const std::list<std::unique_ptr<Stage>>&, const std::string& uid) override;
 
   std::string get_name() const override { return "tree_wire_intersect"; }
 
-  LASRtreewireintersect* clone() const override { return new LASRtreewireintersect(*this); };
+  LASRtreewireintersect* clone() const override { return new LASRtreewireintersect(*this); }
 
 private:
-  // --- parameters ---
-  double search_radius = 250.0; // coarse over-estimate speed-up radius (map units)
-
-  // --- per-chunk transient state ---
+  double search_radius = 250.0;
   std::vector<PointLAS> hits;
 
-  // Monotonically incrementing counter used to assign a unique OGR FID to
-  // every hit. NOTE: PointLAS's default ctor zero-initializes FID via memset,
-  // so without this counter every hit would get FID == 0 and
-  // Vector::write()'s duplicate-FID check (Vector.cpp L111-118) would
-  // silently drop every hit after the first one written in the whole run.
-  unsigned int hit_counter = 0;
+  // Shared across every clone (multi-threaded/concurrent-files execution) so that
+  // FIDs stay globally unique in the single shared GDALDataset/layer that all
+  // clones write into (see GDALdataset::dataset being a std::shared_ptr, and
+  // Engine's copy constructor comment: "shared resources such as ... gdal
+  // datasets"). Mirrors LASRlocalmaximum::counter exactly. Must NOT be reset
+  // in clear() -- doing so reintroduces duplicate-FID collisions across
+  // chunks/clones, silently dropping hits via Vector::write's dupfid logic.
+  std::shared_ptr<unsigned int> hit_counter;
 };
 
-#endif // LASRTREEWIREINTERSECT_H
+#endif
