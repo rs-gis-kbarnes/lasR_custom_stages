@@ -36,3 +36,4 @@
 ^.vscode$
 ^python$
 ^.*\.pro$
+^\.vs$
