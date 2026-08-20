@@ -1,60 +1,50 @@
-#ifndef LASRTREESEEDSPHERE_H
-#define LASRTREESEEDSPHERE_H
+#ifndef LASRTREEWIREINTERSECT_H
+#define LASRTREEWIREINTERSECT_H
 
 #include "Stage.h"
 #include "Vector.h"
+#include "Shape.h"
 #include "PointLAS.h"
 
-#include <vector>
+#include <memory>
 #include <string>
+#include <vector>
 
-class LASRlocalmaximum; // fwd decl, full type only needed in the .cpp (includes localmaximum.h)
+class LASRtreeseedsphere; // fwd decl, full type only needed in the .cpp
 
-// Stage 1 of the tree/wire workflow.
-//
-// Consumes ttops produced by an upstream local_maximum() stage and, for each
-// ttop that has a valid HAG (height-above-ground) extrabyte value, derives a
-// "seed" point representing a sphere:
-//   center = (ttop.x, ttop.y, ground_z)   where ground_z = ttop.z - HAG   ("drop to ground")
-//   radius = HAG * radius_multiplier                                      ("buffer to sphere by HAG")
-//
-// This stage performs pure geometry derivation from the upstream stage's
-// in-memory results (LASRlocalmaximum::get_maxima()) and does not need to
-// touch any LAS points itself -- hence need_points() == false.
-class LASRtreeseedsphere : public StageVector
+class LASRtreewireintersect : public StageVector
 {
 public:
-  LASRtreeseedsphere() = default;
+  LASRtreewireintersect();
+  LASRtreewireintersect(const LASRtreewireintersect& other) = default; // shared_ptr copies fine by default
 
-  // No per-point access needed; only reads upstream maxima via connections.
   bool process(PointCloud*& las) override;
   bool write() override;
   void clear(bool last) override;
 
-  // Pure geometry derivation from ttops already resolved by local_maximum;
-  // no LAS points are read by this stage.
-  bool need_points() const override { return false; }
+  bool need_points() const override { return true; }
+  double need_buffer() const override { return search_radius; }
+  bool is_parallelized() const override { return true; }   // NEW: explicit, matches localmaximum/nnmetrics precedent
 
   bool set_parameters(const nlohmann::json&) override;
   bool connect(const std::list<std::unique_ptr<Stage>>&, const std::string& uid) override;
 
-  std::string get_name() const override { return "tree_seed_sphere"; }
+  std::string get_name() const override { return "tree_wire_intersect"; }
 
-  // Accessor used by the downstream LASRtreewireintersect stage.
-  std::vector<PointLAS>& get_seeds() { return seeds; };
-
-  LASRtreeseedsphere* clone() const override { return new LASRtreeseedsphere(*this); };
+  LASRtreewireintersect* clone() const override { return new LASRtreewireintersect(*this); }
 
 private:
-  // --- parameters (from JSON via set_parameters()) ---
-  std::string hag_attribute = "HAG";   // name of the HAG extrabyte stored on each ttop by local_maximum()
-  double radius_multiplier = 1.0;      // sphere radius = HAG * radius_multiplier
+  double search_radius = 250.0;
+  std::vector<PointLAS> hits;
 
-  // --- per-chunk transient output ---
-  // One PointLAS per valid ttop: x/y = ttop x/y, z = ground z (ttop.z - HAG),
-  // FID = ttop.FID (tree id), extrabytes["radius"] and extrabytes[hag_attribute]
-  // carry the derived sphere radius and the HAG value used to compute it.
-  std::vector<PointLAS> seeds;
+  // Shared across every clone (multi-threaded/concurrent-files execution) so that
+  // FIDs stay globally unique in the single shared GDALDataset/layer that all
+  // clones write into (see GDALdataset::dataset being a std::shared_ptr, and
+  // Engine's copy constructor comment: "shared resources such as ... gdal
+  // datasets"). Mirrors LASRlocalmaximum::counter exactly. Must NOT be reset
+  // in clear() -- doing so reintroduces duplicate-FID collisions across
+  // chunks/clones, silently dropping hits via Vector::write's dupfid logic.
+  std::shared_ptr<unsigned int> hit_counter;
 };
 
-#endif // LASRTREESEEDSPHERE_H
+#endif

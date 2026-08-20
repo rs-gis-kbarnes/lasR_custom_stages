@@ -2,17 +2,7 @@
 % Please edit documentation in R/stages.R
 \name{tree_hull3d}
 \alias{tree_hull3d}
-\title{3D concave hull per tree ID
-
-Groups points by a tree segmentation ID stored in a point attribute (e.g. produced by
-\code{region_growing()} and projected onto points with \code{transform_with()}), triangulates each
-group independently with a Delaunay triangulation, and extracts its contour as in \code{hulls()}.
-Because each tree is triangulated separately, the output is a closed, three-dimensional
-polygon per tree (Z is taken from the triangulated vertex heights) rather than a single
-global 2D contour. Setting \code{max_edge} produces a concave hull instead of a full convex hull,
-exactly as in \code{triangulate()}/\code{hulls()}. Optionally, a \code{radius} and \code{wire_filter} restrict
-processing to only the tree IDs that have at least one matching "wire" point within \code{radius}
-map units, skipping every other tree entirely.}
+\title{3D concave hull per tree ID}
 \usage{
 tree_hull3d(
   attribute = "tree_id",
@@ -50,8 +40,6 @@ any other format supported by GDAL. Vector stages may produce geometries with Z 
 Thus, it is discouraged to store them in formats with no 3D support, such as shapefiles.
 }
 \description{
-3D concave hull per tree ID
-
 Groups points by a tree segmentation ID stored in a point attribute (e.g. produced by
 \code{region_growing()} and projected onto points with \code{transform_with()}), triangulates each
 group independently with a Delaunay triangulation, and extracts its contour as in \code{hulls()}.
@@ -63,17 +51,16 @@ processing to only the tree IDs that have at least one matching "wire" point wit
 map units, skipping every other tree entirely.
 }
 \examples{
- 
-g <- system.file("extdata", "MixedConifer.las", package = "lasR")  
-chm  <- rasterize(1, "max", filter = keep_first())  
-lmx  <- local_maximum_raster(chm, 5)  
-tree <- region_growing(chm, lmx, max_cr = 10)  
-eb   <- add_extrabytes("int", "tree_id", "Tree segmentation ID")  
-attr <- transform_with(tree, operator = "=", store_in_attribute = "tree_id", bilinear = FALSE)  
-hull3d <- tree_hull3d(attribute = "tree_id", max_edge = 3)  
-pipeline <- chm + lmx + tree + eb + attr + hull3d  
-ans <- exec(pipeline, on = g)  
- 
+g <- system.file("extdata", "MixedConifer.las", package = "lasR")
+chm  <- rasterize(1, "max", filter = keep_first())
+lmx  <- local_maximum_raster(chm, 5)
+tree <- region_growing(chm, lmx, max_cr = 10)
+eb   <- add_extrabytes("int", "tree_id", "Tree segmentation ID")
+attr <- transform_with(tree, operator = "=", store_in_attribute = "tree_id", bilinear = FALSE)
+hull3d <- tree_hull3d(attribute = "tree_id", max_edge = 3)
+pipeline <- chm + lmx + tree + eb + attr + hull3d
+ans <- exec(pipeline, on = g)
+
 }
 \seealso{
 \link{hulls}
