@@ -369,46 +369,57 @@ void Vector::set_chunk(const Chunk& chunk)
   extent[3] = chunk.ymax;
 }
 
-bool Vector::write(const PolygonXYZ& poly, int tree_id)  
-{  
-  if (!dataset) { last_error = "cannot write with uninitialized GDALDataset"; return false; }  
-  if (eGType != wkbPolygon25D) { last_error = "ERROR: The file is not of type POLYGON 25D"; return false; }  
-  
-  OGRPolygon polygon;  
-  OGRLinearRing ring;  
-  for (const auto& p : poly.coordinates)  
-    ring.addPoint(p.x, p.y, p.z);  
-  polygon.addRing(&ring);  
-  
-  OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());  
-  feature->SetGeometry(&polygon);  
-  feature->SetField("tree_id", tree_id);  
-  
-  if (layer->CreateFeature(feature) != OGRERR_NONE)  
-  {  
-    last_error = "ERROR: GDAL failed to create feature.";  
-    OGRFeature::DestroyFeature(feature);  
-    return false;  
-  }  
-  OGRFeature::DestroyFeature(feature);  
-  return true;  
+bool Vector::write(const PolygonXYZ& poly, int tree_id)
+{
+  if (!dataset) { last_error = "cannot write with uninitialized GDALDataset"; return false; }
+  if (eGType != wkbPolygon25D) { last_error = "ERROR: The file is not of type POLYGON 25D"; return false; }
+
+  OGRPolygon polygon;
+  OGRLinearRing ring;
+  for (const auto& p : poly.coordinates)
+    ring.addPoint(p.x, p.y, p.z);
+  polygon.addRing(&ring);
+
+  OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+  feature->SetGeometry(&polygon);
+  feature->SetField("tree_id", tree_id);
+
+  if (layer->CreateFeature(feature) != OGRERR_NONE)
+  {
+    last_error = "ERROR: GDAL failed to create feature.";
+    OGRFeature::DestroyFeature(feature);
+    return false;
+  }
+  OGRFeature::DestroyFeature(feature);
+  return true;
 }
 
 bool Vector::finalize_extent()
 {
-    if (!dataset || !layer) return true; // nothing to finalize  
-    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to push  
-
-    // OGRLayer::SetExtent() is not implemented for OGRGeoPackageLayer (only  
-    // OGRShapeLayer implements it), so force the extent via GPKG's own  
-    // SQLite metadata table instead.  
-    const char* layer_name = layer->GetName();
-    const char* sql = CPLSPrintf(
+    if (!dataset || !layer) return true;
+ 
+    OGREnvelope env;
+    if (layer->GetExtent(&env, TRUE) != OGRERR_NONE)
+        return true;
+ 
+    GDALDriver* drv = dataset->GetDriver();
+    if (!drv || !EQUAL(drv->GetDescription(), "GPKG"))
+        return true; // only GPKG needs this manual gpkg_contents fixup
+ 
+    CPLString layer_name_escaped(layer->GetName());
+    layer_name_escaped.replaceAll("'", "''");
+ 
+    CPLString sql;
+    sql.Printf(
         "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",
-        bbox[0], bbox[1], bbox[2], bbox[3], layer_name);
-
-    OGRLayer* result = dataset->ExecuteSQL(sql, nullptr, nullptr);
+        env.MinX, env.MinY, env.MaxX, env.MaxY, layer_name_escaped.c_str());
+ 
+    CPLErrorReset();
+    OGRLayer* result = dataset->ExecuteSQL(sql.c_str(), nullptr, nullptr);
     if (result) dataset->ReleaseResultSet(result);
-
+ 
+    if (CPLGetLastErrorType() != CE_None)
+        return false; // surface the failure instead of swallowing it
+ 
     return true;
 }
