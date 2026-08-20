@@ -1,11 +1,11 @@
-#ifndef VECTOR_H  
-#define VECTOR_H  
+#ifndef VECTOR_H  
+#define VECTOR_H  
 
-#include "GDALdataset.h"  
-#include "PointLAS.h"  
-#include "Chunk.h"  
+#include "GDALdataset.h"  
+#include "PointLAS.h"  
+#include "Chunk.h"  
 
-#include <limits>  
+#include <limits>  
 
 typedef std::pair<std::string, OGRFieldType> Field;
 
@@ -20,13 +20,13 @@ public:
 	bool write(const PointXYZAttrs& p);
 	bool write(const std::vector<TriangleXYZ>& triangles);
 	bool write(const std::vector<PolygonXY>& poly);
-	bool write(const PolygonXYZ& poly, int tree_id);                    // per-tree hull  
-	bool write(const std::vector<TriangleXYZ>& triangles, int tree_id); // per-tree mesh  
+	bool write(const PolygonXYZ& poly, int tree_id);                    // per-tree hull  
+	bool write(const std::vector<TriangleXYZ>& triangles, int tree_id); // per-tree mesh  
 	bool finalize_extent();
 	void add_field(const std::string& name, OGRFieldType type);
 	void set_chunk(const Chunk& chunk);
 	int get_dupfid() const { return dupfid; };
-	//void set_fields_for(writable type) { writetype = type; };  
+	//void set_fields_for(writable type) { writetype = type; };  
 
 private:
 	int nattr;
@@ -39,14 +39,14 @@ private:
 					   -std::numeric_limits<double>::max() };
 	std::vector<Field> fields;
 
-	void update_bbox(const Shape& s);        // for TriangleXYZ and anything deriving from Shape  
-	void update_bbox(const PolygonXYZ& p);   // PolygonXYZ is not a Shape, needs its own overload  
+	void update_bbox(const Shape& s);        // for TriangleXYZ and anything deriving from Shape  
+	void update_bbox(const PolygonXYZ& p);   // PolygonXYZ is not a Shape, needs its own overload  
 };
 
-// Wraps a batch of writes in a single GDAL/OGR transaction so per-feature  
-// CreateFeature() calls don't each trigger an implicit SQLite commit/fsync.  
-// Construct ONE of these around an entire write loop (e.g. all trees in a  
-// chunk), not once per feature/call — that's what actually amortizes the I/O.  
+// Wraps a batch of writes in a single GDAL/OGR transaction so per-feature  
+// CreateFeature() calls don't each trigger an implicit SQLite commit/fsync.  
+// Construct ONE of these around an entire write loop (e.g. all trees in a  
+// chunk), not once per feature/call — that's what actually amortizes the I/O.  
 class TransactionGuard
 {
 public:

@@ -258,7 +258,7 @@ bool Vector::write(const PointXYZAttrs& p)
 
 bool Vector::write(const std::vector<TriangleXYZ>& triangles)
 {
-    TransactionGuard tg(*this); // batch all CreateFeature() calls into one transaction  
+    TransactionGuard tg(*this); // batch all CreateFeature() calls into one transaction  
 
     OGRMultiPolygon triangulation;
     for (auto& tri : triangles)
@@ -267,7 +267,7 @@ bool Vector::write(const std::vector<TriangleXYZ>& triangles)
         if (!(centroid.x >= extent[0] && centroid.x <= extent[2] && centroid.y >= extent[1] && centroid.y <= extent[3]))
             continue;
 
-        update_bbox(tri); // accumulate true written extent  
+        update_bbox(tri); // accumulate true written extent  
 
         OGRLinearRing ring;
         ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
@@ -361,7 +361,7 @@ void Vector::set_chunk(const Chunk& chunk)
 }
 
 
-// -------------------- bbox tracking --------------------  
+// -------------------- bbox tracking --------------------  
 
 void Vector::update_bbox(const Shape& s)
 {
@@ -382,7 +382,7 @@ void Vector::update_bbox(const PolygonXYZ& poly)
     }
 }
 
-// -------------------- per-tree hull write --------------------  
+// -------------------- per-tree hull write --------------------  
 
 bool Vector::write(const PolygonXYZ& poly, int tree_id)
 {
@@ -413,42 +413,7 @@ bool Vector::write(const PolygonXYZ& poly, int tree_id)
     return true;
 }
 
-bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
-{
-    if (triangles.empty()) return true;
-
-    OGRMultiPolygon mesh;
-    for (const auto& tri : triangles)
-    {
-        update_bbox(tri);
-
-        OGRLinearRing ring;
-        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
-        ring.addPoint(tri.B.x, tri.B.y, tri.B.z);
-        ring.addPoint(tri.C.x, tri.C.y, tri.C.z);
-        ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
-
-        OGRPolygon facet;
-        facet.addRing(&ring);
-        mesh.addGeometry(&facet);
-    }
-
-    OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    feature->SetGeometry(&mesh);
-    feature->SetField("tree_id", tree_id);
-
-    if (layer->CreateFeature(feature) != OGRERR_NONE)
-    {
-        last_error = "ERROR: GDAL failed to create feature.";
-        OGRFeature::DestroyFeature(feature);
-        return false;
-    }
-
-    OGRFeature::DestroyFeature(feature);
-    return true;
-}
-
-// -------------------- per-tree mesh write --------------------  
+// -------------------- per-tree mesh write --------------------  
 
 bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
 {
@@ -458,7 +423,7 @@ bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
     OGRMultiPolygon mesh;
     for (const auto& tri : triangles)
     {
-        update_bbox(tri); // TriangleXYZ derives from Shape -> xmin/xmax/ymin/ymax available  
+        update_bbox(tri); // TriangleXYZ derives from Shape -> xmin/xmax/ymin/ymax available  
 
         OGRLinearRing ring;
         ring.addPoint(tri.A.x, tri.A.y, tri.A.z);
@@ -476,24 +441,24 @@ bool Vector::write(const std::vector<TriangleXYZ>& triangles, int tree_id)
     feature->SetGeometry(&mesh);
 
     bool ok = (layer->CreateFeature(feature) == OGRERR_NONE);
-    if (!ok) last_error = "ERROR: GDAL failed to create feature."; // # nocov  
+    if (!ok) last_error = "ERROR: GDAL failed to create feature."; // # nocov  
 
     OGRFeature::DestroyFeature(feature);
     return ok;
 }
 
-// -------------------- extent finalize (GPKG has no OGRLayer::SetExtent) --------------------  
+// -------------------- extent finalize (GPKG has no OGRLayer::SetExtent) --------------------  
 
 bool Vector::finalize_extent()
 {
-    if (!dataset || !layer) return true; // nothing to finalize  
-    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to push  
+    if (!dataset || !layer) return true; // nothing to finalize  
+    if (bbox[0] > bbox[2]) return true;  // no features written, nothing to push  
 
-    // OGRLayer::SetExtent() is not implemented for OGRGeoPackageLayer (only  
-    // OGRShapeLayer implements it), so force the extent via GPKG's own  
-    // SQLite metadata table instead.  
+    // OGRLayer::SetExtent() is not implemented for OGRGeoPackageLayer (only  
+    // OGRShapeLayer implements it), so force the extent via GPKG's own  
+    // SQLite metadata table instead.  
     const char* layer_name = layer->GetName();
-    char* sql = CPLSPrintf(
+    const char* sql = CPLSPrintf(
         "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",
         bbox[0], bbox[1], bbox[2], bbox[3], layer_name);
 

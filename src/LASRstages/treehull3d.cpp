@@ -1,10 +1,10 @@
-#include "treehull3d.h"  
-#include "PointCloud.h"  
-#include "Progress.h"  
+#include "treehull3d.h"  
+#include "PointCloud.h"  
+#include "Progress.h"  
 
-#include "delaunator.hpp"  
+#include "delaunator/delaunator.hpp"  
 
-#include <random>  
+#include <random>  
 
 LASRtreehull3d::LASRtreehull3d()
 {
@@ -22,7 +22,7 @@ LASRtreehull3d::LASRtreehull3d(const LASRtreehull3d& other) : StageVector(other)
 	trim = other.trim;
 	radius = other.radius;
 	wire_filter_strings = other.wire_filter_strings;
-	wire_pointfilter = PointFilter(); // must be rebuilt, never bitwise-copied  
+	wire_pointfilter = PointFilter(); // must be rebuilt, never bitwise-copied  
 	for (const auto& f : wire_filter_strings) wire_pointfilter.add_condition(f);
 
 	mesh_vector = other.mesh_vector;
@@ -48,8 +48,8 @@ bool LASRtreehull3d::set_parameters(const nlohmann::json& stage)
 
 void LASRtreehull3d::set_crs(const CRS& crs)
 {
-	StageVector::set_crs(crs); // sets Stage::crs and vector.set_crs(crs)  
-	mesh_vector.set_crs(crs);  // NEW: mesh_vector was never getting the CRS before this fix  
+	StageVector::set_crs(crs); // sets Stage::crs and vector.set_crs(crs)  
+	mesh_vector.set_crs(crs);  // NEW: mesh_vector was never getting the CRS before this fix  
 }
 
 bool LASRtreehull3d::set_output_file(const std::string& file)
@@ -71,7 +71,7 @@ bool LASRtreehull3d::set_output_file(const std::string& file)
 		if (!mesh_vector.create_file()) return false;
 		written.push_back(mesh_ofile);
 	}
-	// else: wildcard case, defer creation to set_input_file_name()  
+	// else: wildcard case, defer creation to set_input_file_name()  
 
 	return true;
 }
@@ -128,7 +128,7 @@ bool LASRtreehull3d::process(PointCloud*& las)
 		{
 			p = &las->point;
 			if (pointfilter.filter(p)) continue;
-			if (wire_pointfilter.filter(p)) continue; // filter() returns true = REJECTED; skip points that don't pass the wire filter  
+			if (wire_pointfilter.filter(p)) continue; // filter() returns true = REJECTED; skip points that don't pass the wire filter  
 
 			std::vector<Point> neighbors;
 			las->query_sphere(*p, radius, neighbors, &pointfilter);
@@ -138,10 +138,10 @@ bool LASRtreehull3d::process(PointCloud*& las)
 		las->seek(0);
 	}
 
-	// -------------------- per-tree point collection, TRUE coordinates + index_map --------------------  
-	// Mirrors LASRtriangulate::process(): shift-for-Delaunator-stability coords are kept separate  
-	// from the index that maps back to the ORIGINAL point, so no offset ever needs to be re-applied  
-	// and no z_lookup/quantization hack is needed to recover Z.  
+	// -------------------- per-tree point collection, TRUE coordinates + index_map --------------------  
+	// Mirrors LASRtriangulate::process(): shift-for-Delaunator-stability coords are kept separate  
+	// from the index that maps back to the ORIGINAL point, so no offset ever needs to be re-applied  
+	// and no z_lookup/quantization hack is needed to recover Z.  
 
 	double xoffset = (las->header->min_x + las->header->max_x) / 2;
 	double yoffset = (las->header->min_y + las->header->max_y) / 2;
@@ -149,7 +149,7 @@ bool LASRtreehull3d::process(PointCloud*& las)
 	std::default_random_engine gen(std::random_device{}());
 	std::normal_distribution<double> noise(0.0, 1e-10);
 
-	std::unordered_map<int, std::vector<double>> coords_by_id; // shifted x,y pairs fed to Delaunator only  
+	std::unordered_map<int, std::vector<double>> coords_by_id; // shifted x,y pairs fed to Delaunator only  
 
 	Point* p;
 	while (las->read_point())
@@ -158,12 +158,12 @@ bool LASRtreehull3d::process(PointCloud*& las)
 		if (pointfilter.filter(p)) continue;
 
 		int id = (int)id_accessor(p);
-		if (id == 0) continue;                                    // no tree assigned  
-		if (restrict_ids && detected_ids.count(id) == 0) continue; // not near a wire  
+		if (id == 0) continue;                                    // no tree assigned  
+		if (restrict_ids && detected_ids.count(id) == 0) continue; // not near a wire  
 
 		coords_by_id[id].push_back(p->get_x() - xoffset + noise(gen));
 		coords_by_id[id].push_back(p->get_y() - yoffset + noise(gen));
-		index_by_id[id].push_back(las->current_point); // original point index, for las->get_point() later  
+		index_by_id[id].push_back(las->current_point); // original point index, for las->get_point() later  
 	}
 
 	progress->set_total(coords_by_id.size());
@@ -174,7 +174,7 @@ bool LASRtreehull3d::process(PointCloud*& las)
 		std::vector<double>& coords = kv.second;
 		std::vector<int>& index_map = index_by_id[id];
 
-		if (coords.size() < 6) continue; // fewer than 3 points  
+		if (coords.size() < 6) continue; // fewer than 3 points  
 
 		delaunator::Delaunator d(coords);
 
@@ -216,9 +216,9 @@ bool LASRtreehull3d::process(PointCloud*& las)
 
 		if (kept_triangles.empty()) continue;
 
-		tree_triangles[id] = kept_triangles; // NEW: store mesh facets for this tree  
+		tree_triangles[id] = kept_triangles; // NEW: store mesh facets for this tree  
 
-		// ---- boundary edges: appear exactly once (not shared by two kept triangles) ----  
+		// ---- boundary edges: appear exactly once (not shared by two kept triangles) ----  
 		std::vector<Edge3D> edges;
 		for (auto& ec : edge_count)
 			if (ec.second == 1) edges.push_back(ec.first);
@@ -236,7 +236,7 @@ bool LASRtreehull3d::process(PointCloud*& las)
 
 		OGRGeometry* merged = nullptr;
 		OGRGeometry* polys = nullptr;
-		merged = gc.Union(nullptr); // # nocov safe-guard if Union unsupported handled below  
+		merged = gc.Union(nullptr); // # nocov safe-guard if Union unsupported handled below  
 		if (merged)
 		{
 			polys = OGRGeometryFactory::organizePolygons(&merged, 1, nullptr, nullptr);
@@ -264,7 +264,7 @@ bool LASRtreehull3d::process(PointCloud*& las)
 	return true;
 }
 
-// -------------------- clear / write --------------------  
+// -------------------- clear / write --------------------  
 
 void LASRtreehull3d::clear(bool last)
 {
