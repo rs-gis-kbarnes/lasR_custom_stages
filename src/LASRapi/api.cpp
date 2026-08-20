@@ -564,19 +564,40 @@ Pipeline transform_with(std::string connect_uid, std::string operation, std::str
   return Pipeline(s);
 }
 
-Pipeline tree_hull3d(std::string attribute, double max_edge, double radius,  
-                      std::vector<std::string> wire_filter, std::string ofile)  
-{  
-  Stage s("tree_hull3d");  
-  s.set("attribute", attribute);  
-  s.set("max_edge", max_edge);  
-  s.set("radius", radius);  
-  s.set("wire_filter", wire_filter);  
-  s.set("output", ofile);  
-  s.set_vector();  
-  return Pipeline(s);  
+Pipeline tree_hull3d(std::string attribute, double max_edge, double radius,
+                      std::vector<std::string> wire_filter, std::string ofile)
+{
+  Stage s("tree_hull3d");
+  s.set("attribute", attribute);
+  s.set("max_edge", max_edge);
+  s.set("radius", radius);
+  s.set("wire_filter", wire_filter);
+  s.set("output", ofile);
+  s.set_vector();
+  return Pipeline(s);
 }
 
+Pipeline tree_seed_sphere(std::string connect_uid, std::string hag_attribute, double radius_multiplier, std::string ofile)
+{
+  Stage s("tree_seed_sphere");
+  s.set("connect", connect_uid);
+  s.set("hag_attribute", hag_attribute);
+  s.set("radius_multiplier", radius_multiplier);
+  s.set("output", ofile);
+  s.set_vector();
+  return Pipeline(s);
+}
+ 
+Pipeline tree_wire_intersect(std::string connect_uid, double search_radius, std::vector<std::string> filter, std::string ofile)
+{
+  Stage s("tree_wire_intersect");
+  s.set("connect", connect_uid);
+  s.set("search_radius", search_radius);
+  s.set("filter", filter);
+  s.set("output", ofile);
+  s.set_vector();
+  return Pipeline(s);
+}
 Pipeline write_las(std::string ofile, std::vector<std::string> filter, bool keep_buffer, unsigned char version, unsigned char pdrf)
 {
   Stage s("write_las");

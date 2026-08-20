@@ -1464,59 +1464,152 @@ transform_with = function(stage, operator = "-", store_in_attribute = "", biline
   return(ans)
 }
 
-#' 3D concave hull per tree ID  
-#'  
-#' Groups points by a tree segmentation ID stored in a point attribute (e.g. produced by  
-#' `region_growing()` and projected onto points with `transform_with()`), triangulates each  
-#' group independently with a Delaunay triangulation, and extracts its contour as in `hulls()`.  
-#' Because each tree is triangulated separately, the output is a closed, three-dimensional  
-#' polygon per tree (Z is taken from the triangulated vertex heights) rather than a single  
-#' global 2D contour. Setting `max_edge` produces a concave hull instead of a full convex hull,  
-#' exactly as in `triangulate()`/`hulls()`. Optionally, a `radius` and `wire_filter` restrict  
-#' processing to only the tree IDs that have at least one matching "wire" point within `radius`  
-#' map units, skipping every other tree entirely.  
-#'  
-#' @param attribute character. Name of the point attribute holding the integer tree segmentation  
-#' ID (see `add_extrabytes()` + `transform_with()` to project a `region_growing()` raster onto  
-#' points). Must be an attribute of type `int` or `double`; other types raise an error.  
-#' @param max_edge numeric. Maximum triangle edge length threshold used to trim the Delaunay  
-#' triangulation before extracting the contour, exactly as in `triangulate()`. `0` (default)  
-#' keeps every triangle, i.e. produces the convex hull of each tree's points.  
-#' @param radius numeric. If greater than `0`, restrict output to only the tree IDs that have at  
-#' least one point matching `wire_filter` within this radius (map units). `0` (default) disables  
-#' this restriction and processes every tree ID present in the point cloud.  
-#' @param wire_filter character. A point filter string (same DSL as the `filter` argument  
-#' elsewhere in lasR, e.g. `keep_class(14)`) used to flag "wire" points when `radius > 0`.  
-#' Ignored if `radius == 0`.  
-#' @template param-ofile  
-#'  
-#' @template return-vector  
-#'  
-#' @examples  
-#' g <- system.file("extdata", "MixedConifer.las", package = "lasR")  
-#' chm  <- rasterize(1, "max", filter = keep_first())  
-#' lmx  <- local_maximum_raster(chm, 5)  
-#' tree <- region_growing(chm, lmx, max_cr = 10)  
-#' eb   <- add_extrabytes("int", "tree_id", "Tree segmentation ID")  
-#' attr <- transform_with(tree, operator = "=", store_in_attribute = "tree_id", bilinear = FALSE)  
-#' hull3d <- tree_hull3d(attribute = "tree_id", max_edge = 3)  
-#' pipeline <- chm + lmx + tree + eb + attr + hull3d  
-#' ans <- exec(pipeline, on = g)  
-#'  
-#' @seealso  
-#' \link{hulls}  
-#' \link{triangulate}  
-#' \link{region_growing}  
-#' \link{transform_with}  
-#'  
-#' @export  
-#' @md  
-tree_hull3d = function(attribute = "tree_id", max_edge = 0, radius = 0, wire_filter = "", ofile = tempgpkg())  
-{  
-  ofile = normalizePath(ofile, mustWork = FALSE)  
-  .APISTAGES$tree_hull3d(attribute, max_edge, radius, wire_filter, ofile)  
-}  
+#' 3D concave hull per tree ID
+#'
+#' Groups points by a tree segmentation ID stored in a point attribute (e.g. produced by
+#' `region_growing()` and projected onto points with `transform_with()`), triangulates each
+#' group independently with a Delaunay triangulation, and extracts its contour as in `hulls()`.
+#' Because each tree is triangulated separately, the output is a closed, three-dimensional
+#' polygon per tree (Z is taken from the triangulated vertex heights) rather than a single
+#' global 2D contour. Setting `max_edge` produces a concave hull instead of a full convex hull,
+#' exactly as in `triangulate()`/`hulls()`. Optionally, a `radius` and `wire_filter` restrict
+#' processing to only the tree IDs that have at least one matching "wire" point within `radius`
+#' map units, skipping every other tree entirely.
+#'
+#' @param attribute character. Name of the point attribute holding the integer tree segmentation
+#' ID (see `add_extrabytes()` + `transform_with()` to project a `region_growing()` raster onto
+#' points). Must be an attribute of type `int` or `double`; other types raise an error.
+#' @param max_edge numeric. Maximum triangle edge length threshold used to trim the Delaunay
+#' triangulation before extracting the contour, exactly as in `triangulate()`. `0` (default)
+#' keeps every triangle, i.e. produces the convex hull of each tree's points.
+#' @param radius numeric. If greater than `0`, restrict output to only the tree IDs that have at
+#' least one point matching `wire_filter` within this radius (map units). `0` (default) disables
+#' this restriction and processes every tree ID present in the point cloud.
+#' @param wire_filter character. A point filter string (same DSL as the `filter` argument
+#' elsewhere in lasR, e.g. `keep_class(14)`) used to flag "wire" points when `radius > 0`.
+#' Ignored if `radius == 0`.
+#' @template param-ofile
+#'
+#' @template return-vector
+#'
+#' @examples
+#' g <- system.file("extdata", "MixedConifer.las", package = "lasR")
+#' chm  <- rasterize(1, "max", filter = keep_first())
+#' lmx  <- local_maximum_raster(chm, 5)
+#' tree <- region_growing(chm, lmx, max_cr = 10)
+#' eb   <- add_extrabytes("int", "tree_id", "Tree segmentation ID")
+#' attr <- transform_with(tree, operator = "=", store_in_attribute = "tree_id", bilinear = FALSE)
+#' hull3d <- tree_hull3d(attribute = "tree_id", max_edge = 3)
+#' pipeline <- chm + lmx + tree + eb + attr + hull3d
+#' ans <- exec(pipeline, on = g)
+#'
+#' @seealso
+#' \link{hulls}
+#' \link{triangulate}
+#' \link{region_growing}
+#' \link{transform_with}
+#'
+#' @export
+#' @md
+tree_hull3d = function(attribute = "tree_id", max_edge = 0, radius = 0, wire_filter = "", ofile = tempgpkg())
+{
+  ofile = normalizePath(ofile, mustWork = FALSE)
+  .APISTAGES$tree_hull3d(attribute, max_edge, radius, wire_filter, ofile)
+}
 
+
+#' Tree seed sphere from ttops and HAG
+#'
+#' Stage 1 of the tree/wire strike workflow. Consumes tree tops ("ttops") produced by an
+#' upstream `local_maximum()` stage and, for each ttop that carries a valid HAG
+#' (height-above-ground) extrabyte value, derives a "seed" point representing a sphere:
+#' the sphere is centered on the ttop's x/y at the ground elevation (`ttop.z - HAG`, i.e.
+#' "drop to ground"), with a radius equal to `HAG * radius_multiplier` ("buffer to sphere by
+#' HAG"). The output is a `wkbPoint25D` GeoPackage layer with one feature per detected tree,
+#' carrying the derived `radius` and the source `HAG` value as fields. This stage does not
+#' read any LAS points itself; it operates purely on the in-memory ttop results of the
+#' upstream `local_maximum()` stage. Its output is meant to be consumed by
+#' `tree_wire_intersect()`.
+#'
+#' @param connect_uid Pipeline or UID string. The upstream `local_maximum()` stage providing ttops.
+#' @param hag_attribute character. Name of the HAG extrabyte attribute recorded on each ttop
+#'   (requires the upstream `local_maximum()` call to use `use_attribute = hag_attribute,
+#'   record_attributes = TRUE`).
+#' @param radius_multiplier numeric. Multiplies HAG to derive the sphere radius. Configurable —
+#'   no fixed crown/HAG ratio is assumed by this stage.
+#' @template param-ofile
+#'
+#' @template return-vector
+#'
+#' @examples
+#' f <- system.file("extdata", "MixedConifer.las", package = "lasR")
+#' tri    <- triangulate(filter = keep_ground_and_water())
+#' hag_eb <- add_extrabytes("double", "HAG", "Height Above Ground")
+#' hag    <- transform_with(tri, store_in_attribute = "HAG")
+#' lmf    <- local_maximum(ws = 3, min_height = 2, filter = "HAG > 2",
+#'                          use_attribute = "HAG", record_attributes = TRUE)
+#' seeds  <- tree_seed_sphere(connect_uid = lmf, hag_attribute = "HAG", radius_multiplier = 1.0)
+#' pipeline <- tri + hag_eb + hag + lmf + seeds
+#' ans <- exec(pipeline, on = f)
+#'
+#' @seealso
+#' \link{local_maximum}
+#' \link{transform_with}
+#' \link{tree_wire_intersect}
+#'
+#' @export
+#' @md
+tree_seed_sphere = function(connect_uid, hag_attribute = "HAG", radius_multiplier = 1.0, ofile = tempgpkg())
+{
+  ofile = normalizePath(ofile, mustWork = FALSE)
+  uid = get_stage_info(connect_uid)$uid
+  .APISTAGES$tree_seed_sphere(uid, hag_attribute, radius_multiplier, ofile)
+}
+
+#' Test tree seed spheres for intersection with wire/strike points
+#'
+#' Stage 2 of the tree/wire strike workflow. Consumes the seed spheres produced by an upstream
+#' `tree_seed_sphere()` stage and, for each seed, first performs a coarse over-estimated radius
+#' query (`search_radius`) to cheaply shortlist candidate points near the seed — this is the
+#' "speed up: find trees within an arbitrary large distance of wire points" step — then applies
+#' an exact geometric sphere-containment test against each candidate. Only candidate points that
+#' pass both the coarse pre-filter and the exact sphere test, and that also satisfy the `filter`
+#' argument, are written to the output GeoPackage as plain xyz points (one feature per hit).
+#'
+#' @param connect_uid Pipeline or UID string. The upstream `tree_seed_sphere()` stage providing seeds.
+#' @param search_radius numeric. Coarse over-estimated pre-filter distance (map units) used to
+#'   shortlist candidate points cheaply before the exact sphere test. Default 250.
+#' @param filter character. NOTE: for this stage, `filter` plays the role of the "wire/strike"
+#'   class selector (e.g. `keep_class(14)`), not a generic input-restriction filter — only points
+#'   passing this filter are considered as intersection candidates.
+#' @template param-ofile
+#'
+#' @template return-vector
+#'
+#' @examples
+#' f <- system.file("extdata", "MixedConifer.las", package = "lasR")
+#' tri    <- triangulate(filter = keep_ground_and_water())
+#' hag_eb <- add_extrabytes("double", "HAG", "Height Above Ground")
+#' hag    <- transform_with(tri, store_in_attribute = "HAG")
+#' lmf    <- local_maximum(ws = 3, min_height = 2, filter = "HAG > 2",
+#'                          use_attribute = "HAG", record_attributes = TRUE)
+#' seeds  <- tree_seed_sphere(connect_uid = lmf, hag_attribute = "HAG", radius_multiplier = 1.0)
+#' hits   <- tree_wire_intersect(connect_uid = seeds, search_radius = 250, filter = keep_class(14))
+#' pipeline <- tri + hag_eb + hag + lmf + seeds + hits
+#' ans <- exec(pipeline, on = f)
+#'
+#' @seealso
+#' \link{tree_seed_sphere}
+#' \link{local_maximum}
+#'
+#' @export
+#' @md
+tree_wire_intersect = function(connect_uid, search_radius = 250, filter = "", ofile = tempgpkg())
+{
+  ofile = normalizePath(ofile, mustWork = FALSE)
+  uid = get_stage_info(connect_uid)$uid
+  .APISTAGES$tree_wire_intersect(uid, search_radius, filter, ofile)
+}
 # ===== W ====
 
 #' Write point clouds

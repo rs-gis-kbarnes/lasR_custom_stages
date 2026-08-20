@@ -442,6 +442,16 @@ PYBIND11_MODULE(pylasr, m) {
     py::arg("connect_uid"), py::arg("ws"), py::arg("min_height") = 2.0,
     py::arg("filter") = std::vector<std::string>{""}, py::arg("ofile") = "");
 
+    m.def("tree_seed_sphere", &api::tree_seed_sphere,
+        "Derive a ground-projected HAG sphere seed per tree top",
+        py::arg("connect_uid"), py::arg("hag_attribute") = "HAG",
+        py::arg("radius_multiplier") = 1.0, py::arg("ofile") = "");
+
+    m.def("tree_wire_intersect", &api::tree_wire_intersect,
+        "Test tree seed spheres against wire/strike-classified points for intersection",
+        py::arg("connect_uid"), py::arg("search_radius") = 250.0,
+        py::arg("filter") = std::vector<std::string>{""}, py::arg("ofile") = "");
+
     m.def("callback", [](py::object fun, const std::string& expose, py::object args, bool drop_buffer, bool no_las_update) {
         if (!py::hasattr(fun, "__call__"))
             throw py::type_error("fun must be callable");

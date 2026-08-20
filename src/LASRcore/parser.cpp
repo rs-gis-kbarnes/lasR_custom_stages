@@ -38,6 +38,8 @@
 #include "triangulate.h"
 #include "transformwith.h"
 #include "treehull3d.h"
+#include "treeseedsphere.h"
+#include "treewireintersect.h"
 #include "writelas.h"
 #include "writelax.h"
 #include "writevpc.h"
@@ -129,6 +131,8 @@ bool Engine::parse(const nlohmann::json& json, bool progress)
     {"transform_with",       create_instance<LASRtransformwith>},
     {"triangulate",          create_instance<LASRtriangulate>},
     {"tree_hull3d",          create_instance<LASRtreehull3d>},
+    {"tree_seed_sphere",     create_instance<LASRtreeseedsphere>},
+    {"tree_wire_intersect",  create_instance<LASRtreewireintersect>},
     {"write_las",            create_instance<LASRlaswriter>},
     {"write_vpc",            create_instance<LASRvpcwriter>},
     {"write_pcd",            create_instance<LASRpcdwriter>}

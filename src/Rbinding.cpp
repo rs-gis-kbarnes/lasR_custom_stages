@@ -97,6 +97,9 @@ RCPP_MODULE(stages)
   function("triangulate", &api::triangulate, "Generate a triangulation from the point cloud");
   function("transform_with", &api::transform_with, "Transform the point cloud with");
   function("tree_hull3d", &api::tree_hull3d, "Compute a 3D concave hull per tree ID, optionally restricted to trees near wire points");
+  function("tree_hull3d", &api::tree_hull3d, "Compute a 3D concave hull per tree ID, optionally restricted to trees near wire points");  
+  function("tree_seed_sphere", &api::tree_seed_sphere, "Derive a ground-projected HAG sphere seed per tree top");
+  function("tree_wire_intersect", &api::tree_wire_intersect, "Test tree seed spheres against wire/strike-classified points for intersection");
   function("write_las", &api::write_las, "Write a LAS or LAZ file");
   function("write_copc", &api::write_copc, "Write a LAS or LAZ file");
   function("write_pcd", &api::write_pcd, "Write a PCD file");
