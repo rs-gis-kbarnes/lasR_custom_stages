@@ -24,7 +24,6 @@ public:
 
   bool need_points() const override { return true; }
   double need_buffer() const override { return search_radius; }
-  bool is_parallelized() const override { return true; }   // NEW: explicit, matches localmaximum/nnmetrics precedent
 
   bool set_parameters(const nlohmann::json&) override;
   bool connect(const std::list<std::unique_ptr<Stage>>&, const std::string& uid) override;

@@ -17,6 +17,13 @@ bool LASRtreeseedsphere::set_parameters(const nlohmann::json& stage)
   // uses for its use_attribute field -- see Vector.cpp L129-151).
   vector = Vector(xmin, ymin, xmax, ymax);
   vector.set_geometry_type(wkbPoint25D);
+
+  vector.add_field("Intensity", OFTReal); //real in rest of repo, int instead??
+  vector.add_field("gpstime", OFTReal);
+  vector.add_field("ReturnNumber", OFTInteger);
+  vector.add_field("Classification", OFTInteger);
+  vector.add_field("ScanAngle", OFTReal);
+  
   vector.add_field("radius", OFTReal);
   vector.add_field(hag_attribute, OFTReal);
 
