@@ -396,6 +396,9 @@ bool Vector::write(const PolygonXYZ& poly, int tree_id)
 
 bool Vector::finalize_extent()
 {
+  bool success = true;
+  #pragma omp critical (finalize_vector_extent)
+  {
     if (!dataset || !layer) return true;
  
     OGREnvelope env;
@@ -422,4 +425,6 @@ bool Vector::finalize_extent()
         return false; // surface the failure instead of swallowing it
  
     return true;
+  }
+    
 }
