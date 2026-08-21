@@ -35,33 +35,7 @@ public:
   // no LAS points are read by this stage.
   bool need_points() const override { return false; }
 
-  bool LASRtreeseedsphere::set_parameters(const nlohmann::json& stage)
-  {
-    hag_attribute = stage.value("hag_attribute", hag_attribute);
-    radius_multiplier = stage.value("radius_multiplier", radius_multiplier);
-
-    vector = Vector(xmin, ymin, xmax, ymax);
-    vector.set_geometry_type(wkbPoint25D);
-
-    // Vector::write(seeds, true) unconditionally populates these 5 standard
-    // fields (see Vector.cpp write_attributes==true branch) regardless of
-    // whether the values are meaningful for a derived seed point (they are
-    // all left at their zero-initialized default from PointLAS's memset
-    // ctor here). They MUST be registered via add_field() or GDAL logs
-    // "ERROR 1: Invalid index : -1" once per field per feature.
-    vector.add_field("Intensity", OFTInteger);
-    vector.add_field("gpstime", OFTReal);
-    vector.add_field("ReturnNumber", OFTInteger);
-    vector.add_field("Classification", OFTInteger);
-    vector.add_field("ScanAngle", OFTReal);
-
-    // Fields actually meaningful for this stage.
-    vector.add_field("radius", OFTReal);
-    vector.add_field(hag_attribute, OFTReal);
-
-    return true;
-  }
-
+  bool set_parameters(const nlohmann::json&) override;
 
   bool connect(const std::list<std::unique_ptr<Stage>>&, const std::string& uid) override;
 

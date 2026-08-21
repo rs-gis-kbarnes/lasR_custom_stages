@@ -237,8 +237,8 @@ bool Vector::write(const PointXYZAttrs& p)
   point.setZ(p.z);
   feature->SetGeometry(&point);
   //feature->SetFID(p.FID);
-
-  for (int i = 0 ; i < p.vals.size() ; i++) feature->SetField(i, p.vals[i]);
+  for (size_t i = 0; i < p.vals.size(); i++) feature->SetField((int)i, p.vals[i]);
+  //for (int i = 0 ; i < p.vals.size() ; i++) feature->SetField(i, p.vals[i]);
 
   if (layer->CreateFeature(feature) != OGRERR_NONE)
   {
@@ -394,37 +394,49 @@ bool Vector::write(const PolygonXYZ& poly, int tree_id)
   return true;
 }
 
-bool Vector::finalize_extent()
-{
-  bool success = true;
-  #pragma omp critical (finalize_vector_extent)
-  {
-    if (!dataset || !layer) return true;
+bool Vector::finalize_extent()  
+{  
+  bool success = true;  
  
-    OGREnvelope env;
-    if (layer->GetExtent(&env, TRUE) != OGRERR_NONE)
-        return true;
+  #pragma omp critical (finalize_vector_extent)  
+  {  
+    if (!dataset || !layer)  
+    {  
+      success = true;  
+    }  
+    else  
+    {  
+      OGREnvelope env;  
+      if (layer->GetExtent(&env, TRUE) != OGRERR_NONE)  
+      {  
+        success = true;  
+      }  
+      else  
+      {  
+        GDALDriver* drv = dataset->GetDriver();  
+        if (!drv || !EQUAL(drv->GetDescription(), "GPKG"))  
+        {  
+          success = true; // only GPKG needs this manual gpkg_contents fixup  
+        }  
+        else  
+        {  
+          CPLString layer_name_escaped(layer->GetName());  
+          layer_name_escaped.replaceAll("'", "''");  
  
-    GDALDriver* drv = dataset->GetDriver();
-    if (!drv || !EQUAL(drv->GetDescription(), "GPKG"))
-        return true; // only GPKG needs this manual gpkg_contents fixup
+          CPLString sql;  
+          sql.Printf(  
+              "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",  
+              env.MinX, env.MinY, env.MaxX, env.MaxY, layer_name_escaped.c_str());  
  
-    CPLString layer_name_escaped(layer->GetName());
-    layer_name_escaped.replaceAll("'", "''");
+          CPLErrorReset();  
+          OGRLayer* result = dataset->ExecuteSQL(sql.c_str(), nullptr, nullptr);  
+          if (result) dataset->ReleaseResultSet(result);  
  
-    CPLString sql;
-    sql.Printf(
-        "UPDATE gpkg_contents SET min_x = %.10f, min_y = %.10f, max_x = %.10f, max_y = %.10f WHERE table_name = '%s'",
-        env.MinX, env.MinY, env.MaxX, env.MaxY, layer_name_escaped.c_str());
+          success = (CPLGetLastErrorType() == CE_None);  
+        }  
+      }  
+    }  
+  }  
  
-    CPLErrorReset();
-    OGRLayer* result = dataset->ExecuteSQL(sql.c_str(), nullptr, nullptr);
-    if (result) dataset->ReleaseResultSet(result);
- 
-    if (CPLGetLastErrorType() != CE_None)
-        return false; // surface the failure instead of swallowing it
- 
-    return true;
-  }
-    
+  return success;  
 }
